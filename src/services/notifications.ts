@@ -230,6 +230,7 @@ class NotificationService {
         await foregroundServiceManager.stopCallForegroundService();
       }
       await Notifications.dismissNotificationAsync('active_voice_call');
+      await Notifications.dismissNotificationAsync('active_call_notif').catch(() => {});
       await Notifications.dismissNotificationAsync('chrono_ongoing_call').catch(() => {});
     } catch (err) {
       // yut

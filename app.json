@@ -42,6 +42,7 @@
         "FOREGROUND_SERVICE_PHONE_CALL",
         "RECORD_AUDIO",
         "WAKE_LOCK",
+        "POST_NOTIFICATIONS",
         "android.permission.RECORD_AUDIO",
         "android.permission.CAMERA",
         "android.permission.MODIFY_AUDIO_SETTINGS",
@@ -86,6 +87,17 @@
         {
           "icon": "./assets/icon.png",
           "color": "#38BDF8"
+        }
+      ],
+      [
+        "./plugins/withNotifee.js",
+        {
+          "android": {
+            "foregroundServiceTypes": [
+              "microphone",
+              "phoneCall"
+            ]
+          }
         }
       ]
     ],
