@@ -8,27 +8,12 @@ import {
 } from 'react-native';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
-import { DarkTheme, ThemeProvider } from '@react-navigation/native';
 import { useChatStore } from '../store/useChatStore';
 import { ActiveCallModal } from '../components/ActiveCallModal';
 import { updateService } from '../services/updates';
 import { chronoTheme } from '../theme/colors';
 
 const { colors } = chronoTheme;
-
-const chronoDarkTheme = {
-  ...DarkTheme,
-  dark: true,
-  colors: {
-    ...DarkTheme.colors,
-    primary: colors.primary,
-    background: colors.background, // #0B0F1A Chrono Deep Night
-    card: colors.surface,
-    text: colors.textPrimary,
-    border: colors.border,
-    notification: colors.primary,
-  },
-};
 
 // Sabit (stabil referanslı) ekran seçenekleri: her render'da yeni obje üretmez.
 // Animasyonlar tamamen native (UI thread) üzerinde çalışır; JS thread'i yormaz.
@@ -84,37 +69,33 @@ export default function RootLayout() {
 
   if (isAuthLoading) {
     return (
-      <ThemeProvider value={chronoDarkTheme}>
-        <SafeAreaProvider style={{ flex: 1, backgroundColor: colors.background }}>
-          <StatusBar barStyle="light-content" backgroundColor="#0B0F1A" />
-          <View style={styles.splashContainer}>
-            <Image
-              source={require('../../assets/splash-icon.png')}
-              style={styles.splashLogo}
-              resizeMode="contain"
-            />
-            <ActivityIndicator size="large" color="#38BDF8" style={{ marginTop: 24 }} />
-          </View>
-        </SafeAreaProvider>
-      </ThemeProvider>
+      <SafeAreaProvider style={{ flex: 1, backgroundColor: colors.background }}>
+        <StatusBar barStyle="light-content" backgroundColor="#0B0F1A" />
+        <View style={styles.splashContainer}>
+          <Image
+            source={require('../../assets/splash-icon.png')}
+            style={styles.splashLogo}
+            resizeMode="contain"
+          />
+          <ActivityIndicator size="large" color="#38BDF8" style={{ marginTop: 24 }} />
+        </View>
+      </SafeAreaProvider>
     );
   }
 
   return (
-    <ThemeProvider value={chronoDarkTheme}>
-      <SafeAreaProvider style={{ flex: 1, backgroundColor: colors.background }}>
-        <View style={{ flex: 1, backgroundColor: colors.background }}>
-          <StatusBar barStyle="light-content" backgroundColor="#0B0F1A" />
-          <Stack screenOptions={STACK_SCREEN_OPTIONS}>
-            <Stack.Screen name="(tabs)" />
-            <Stack.Screen name="chat/[id]" />
-            <Stack.Screen name="onboarding" options={FADE_SCREEN_OPTIONS} />
-            <Stack.Screen name="auth" />
-          </Stack>
-          <ActiveCallModal />
-        </View>
-      </SafeAreaProvider>
-    </ThemeProvider>
+    <SafeAreaProvider style={{ flex: 1, backgroundColor: colors.background }}>
+      <View style={{ flex: 1, backgroundColor: colors.background }}>
+        <StatusBar barStyle="light-content" backgroundColor="#0B0F1A" />
+        <Stack screenOptions={STACK_SCREEN_OPTIONS}>
+          <Stack.Screen name="(tabs)" />
+          <Stack.Screen name="chat/[id]" />
+          <Stack.Screen name="onboarding" options={FADE_SCREEN_OPTIONS} />
+          <Stack.Screen name="auth" />
+        </Stack>
+        <ActiveCallModal />
+      </View>
+    </SafeAreaProvider>
   );
 }
 
