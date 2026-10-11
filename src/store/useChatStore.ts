@@ -158,8 +158,10 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     if (!token) return null;
 
     try {
+      console.log('🔄 [syncPushToken] Push token alınmaya çalışılıyor...');
       const pushToken = await registerForPushNotificationsAsync();
       if (pushToken) {
+        console.log('📲 [syncPushToken] Push token sunucuya gönderiliyor (PUT /users/me/push-token):', pushToken);
         const res = await api.put('/users/me/push-token', { pushToken });
         if (res.data) {
           set((state) => {
@@ -169,12 +171,14 @@ export const useChatStore = create<ChatStore>((set, get) => ({
             }
             return { currentUser: nextUser };
           });
-          console.log('✅ Push token senkronize edildi ve kaydedildi:', pushToken);
+          console.log('✅ [syncPushToken] Push token sunucuya ve yerel hafızaya kaydedildi:', pushToken);
         }
         return pushToken;
+      } else {
+        console.warn('⚠️ [syncPushToken] registerForPushNotificationsAsync null döndü, sunucuya istek atılmadı.');
       }
     } catch (err: any) {
-      console.warn('❌ Push token senkronizasyon hatası:', err?.message || err);
+      console.error('❌ [syncPushToken] Push token senkronizasyon hatası:', err?.response?.data || err?.message || err);
     }
     return null;
   },

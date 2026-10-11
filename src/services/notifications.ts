@@ -57,29 +57,20 @@ export async function registerForPushNotificationsAsync(): Promise<string | null
       const { status } = await Notifications.requestPermissionsAsync();
       finalStatus = status;
     }
-  } catch (permErr) {
-    console.warn('Bildirim izni istenirken hata:', permErr);
+  } catch (permErr: any) {
+    console.warn('Bildirim izni istenirken hata:', permErr?.message || permErr);
+  }
+
+  // Emülatör kontrolü: Emülatörlerde gerçek FCM/APNS token'ı üretilemez.
+  // Geliştirme ve test süreçlerinde DB'de push token'ın boş kalmaması için geçerli Expo formatında belirteç üretilir.
+  if (!Device.isDevice) {
+    const emulatorToken = `ExponentPushToken[emulator-${Platform.OS}-${(Device.modelName || 'device').replace(/[^a-zA-Z0-9]/g, '')}]`;
+    console.log('📱 [Emulator] Emülatör tespit edildi, test Expo push token kullanılıyor:', emulatorToken);
+    return emulatorToken;
   }
 
   if (finalStatus !== 'granted') {
-    console.warn('⚠️ Push bildirim izni verilmedi (Durum:', finalStatus, ')');
-    // Emülatör veya izin reddinde geliştirme modunda token atanması gerekiyorsa:
-    if (__DEV__ && !Device.isDevice) {
-      const devToken = `ExponentPushToken[dev-emulator-${Platform.OS}]`;
-      console.log('🛠️ [DEV] Emülatör geliştirme push token kullanılıyor:', devToken);
-      return devToken;
-    }
-    return null;
-  }
-
-  // Emülatör kontrolü: Fiziksel cihaz değilse Expo Push remote servisi çalışmaz
-  if (!Device.isDevice) {
-    console.log('📱 Push Notifications: Fiziksel cihaz değil (Emülatör/Simülatör).');
-    if (__DEV__) {
-      const devToken = `ExponentPushToken[dev-emulator-${Platform.OS}]`;
-      console.log('🛠️ [DEV] Emülatör geliştirme push token kullanılıyor:', devToken);
-      return devToken;
-    }
+    console.warn('⚠️ Push bildirim izni verilmedi (İzin Durumu:', finalStatus, ')');
     return null;
   }
 
@@ -95,14 +86,17 @@ export async function registerForPushNotificationsAsync(): Promise<string | null
     );
     console.log('📲 Expo Push Token başarıyla alındı:', tokenData.data);
     return tokenData.data;
-  } catch (error) {
-    console.warn('Expo push token projectId ile alınamadı, parametresiz deneniyor:', error);
+  } catch (error: any) {
+    console.warn('Expo push token projectId ile alınamadı, parametresiz deneniyor:', error?.message || error);
     try {
       const tokenData = await Notifications.getExpoPushTokenAsync();
       console.log('📲 Expo Push Token başarıyla alındı (fallback):', tokenData.data);
       return tokenData.data;
-    } catch (err2) {
-      console.warn('Expo push token fallback ile de alınamadı:', err2);
+    } catch (err2: any) {
+      console.error(
+        '❌ Expo push token alınamadı. (Android APK standalone için Firebase google-services.json gereklidir):',
+        err2?.message || err2,
+      );
       return null;
     }
   }
