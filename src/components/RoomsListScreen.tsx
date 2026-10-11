@@ -26,6 +26,7 @@ import { useShallow } from 'zustand/react/shallow';
 import { formatListTimestamp } from '../utils/format';
 
 const { colors } = chronoTheme;
+const CHRONO_APP_ICON = require('../../assets/android-icon-foreground.png');
 
 interface RoomsListScreenProps {
   onSelectRoom: (room: Room) => void;
@@ -45,8 +46,24 @@ export const RoomsListScreen: React.FC<RoomsListScreenProps> = ({
 
   const [moreMenuVisible, setMoreMenuVisible] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [isSearchVisible, setIsSearchVisible] = useState(false);
+  const searchInputRef = useRef<TextInput>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [activeTab, setActiveTab] = useState<TabFilter>('ALL');
+
+  const toggleSearch = useCallback(() => {
+    setIsSearchVisible((prev) => {
+      const next = !prev;
+      if (!next) {
+        setSearchQuery('');
+      } else {
+        setTimeout(() => {
+          searchInputRef.current?.focus();
+        }, 100);
+      }
+      return next;
+    });
+  }, []);
 
   // Uzun basma menüsü
   const [selectedRoomForAction, setSelectedRoomForAction] = useState<Room | null>(null);
@@ -222,40 +239,67 @@ export const RoomsListScreen: React.FC<RoomsListScreenProps> = ({
       )}
 
       {/* ------------------------------------------------------------- */}
-      {/* Chrono Brand Header                                           */}
+      {/* Chrono Brand Header & Actions                                 */}
       {/* ------------------------------------------------------------- */}
       <View style={styles.topBar}>
         <View style={styles.brandRow}>
-          <View style={styles.chronoLogoMark}>
-            <View style={styles.chronoLogoArc} />
-            <View style={styles.chronoDotTop} />
-            <View style={styles.chronoDotMid} />
-            <View style={styles.chronoDotBot} />
-          </View>
+          <Image
+            source={CHRONO_APP_ICON}
+            style={styles.brandIcon}
+            resizeMode="contain"
+          />
           <Text style={styles.headerTitle}>Chrono</Text>
+        </View>
+
+        <View style={styles.headerActions}>
+          <TouchableOpacity
+            style={styles.headerActionBtn}
+            onPress={toggleSearch}
+            activeOpacity={0.7}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          >
+            <Ionicons
+              name={isSearchVisible ? 'close' : 'search-outline'}
+              size={22}
+              color={isSearchVisible ? colors.primaryLight : colors.textPrimary}
+            />
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.headerActionBtn}
+            onPress={() => setMoreMenuVisible(true)}
+            activeOpacity={0.7}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          >
+            <Ionicons name="ellipsis-vertical" size={20} color={colors.textPrimary} />
+          </TouchableOpacity>
         </View>
       </View>
 
       {/* ------------------------------------------------------------- */}
-      {/* Search Bar Pill                                               */}
+      {/* Search Bar Pill (Büyüteç simgesine basıldığında açılır)       */}
       {/* ------------------------------------------------------------- */}
-      <View style={styles.searchSection}>
-        <View style={styles.searchBar}>
-          <Ionicons name="search" size={18} color="#64748B" style={{ marginRight: 10 }} />
-          <TextInput
-            style={styles.searchInput}
-            placeholder="Sohbet veya kişi ara"
-            placeholderTextColor="#64748B"
-            value={searchQuery}
-            onChangeText={setSearchQuery}
-          />
-          {searchQuery.length > 0 && (
-            <TouchableOpacity onPress={() => setSearchQuery('')}>
-              <Ionicons name="close-circle" size={18} color="#64748B" />
-            </TouchableOpacity>
-          )}
+      {isSearchVisible && (
+        <View style={styles.searchSection}>
+          <View style={styles.searchBar}>
+            <Ionicons name="search" size={18} color="#64748B" style={{ marginRight: 10 }} />
+            <TextInput
+              ref={searchInputRef}
+              style={styles.searchInput}
+              placeholder="Sohbet veya kişi ara"
+              placeholderTextColor="#64748B"
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+              autoFocus
+            />
+            {searchQuery.length > 0 && (
+              <TouchableOpacity onPress={() => setSearchQuery('')}>
+                <Ionicons name="close-circle" size={18} color="#64748B" />
+              </TouchableOpacity>
+            )}
+          </View>
         </View>
-      </View>
+      )}
 
       {/* ------------------------------------------------------------- */}
       {/* Filter Tabs: Tümü · Kişisel · Odalar                          */}
@@ -1010,47 +1054,22 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 10,
   },
-  chronoLogoMark: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    position: 'relative',
+  brandIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+  },
+  headerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  headerActionBtn: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  chronoLogoArc: {
-    width: 26,
-    height: 26,
-    borderRadius: 13,
-    borderWidth: 2.5,
-    borderColor: '#2563EB',
-  },
-  chronoDotTop: {
-    position: 'absolute',
-    top: 5,
-    right: 1,
-    width: 3.5,
-    height: 3.5,
-    borderRadius: 1.75,
-    backgroundColor: '#38BDF8',
-  },
-  chronoDotMid: {
-    position: 'absolute',
-    top: 12,
-    right: -1,
-    width: 4,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: '#38BDF8',
-  },
-  chronoDotBot: {
-    position: 'absolute',
-    bottom: 5,
-    right: 1,
-    width: 3.5,
-    height: 3.5,
-    borderRadius: 1.75,
-    backgroundColor: '#38BDF8',
   },
   liveVoiceCard: {
     flexDirection: 'row',
