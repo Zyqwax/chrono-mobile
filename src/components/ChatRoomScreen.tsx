@@ -23,6 +23,7 @@ import { notificationService } from '../services/notifications';
 import { RoomInfoModal } from './RoomInfoModal';
 import { VoiceRoomSheet } from './VoiceRoomSheet';
 import { ChronoAvatar } from './ChronoAvatar';
+import { ChronoProgressRing, ChronoRingStatus } from './ChronoProgressRing';
 import { chronoTheme } from '../theme/colors';
 import { useShallow } from 'zustand/react/shallow';
 
@@ -74,6 +75,7 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({ room, onBack }) 
     sendMessage,
     editMessage,
     deleteMessage,
+    markAsRead,
     typingUsers,
     sendTyping,
     activeVoiceRoomId,
@@ -89,6 +91,7 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({ room, onBack }) 
       sendMessage: s.sendMessage,
       editMessage: s.editMessage,
       deleteMessage: s.deleteMessage,
+      markAsRead: s.markAsRead,
       typingUsers: s.typingUsers,
       sendTyping: s.sendTyping,
       activeVoiceRoomId: s.activeVoiceRoomId,
@@ -104,11 +107,34 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({ room, onBack }) 
   const activeMsgs = useChatStore((s) => s.messages);
   const activeRoomId = useChatStore((s) => s.activeRoom?.id);
 
+  // Karşı tarafın odayı son okuduğu tarih (anlık soket 'messages_read' ile güncellenir)
+  const currentOthersReadAt = useChatStore(
+    (s) =>
+      s.rooms.find((r) => r.id === room.id)?.othersReadAt ??
+      (s.activeRoom?.id === room.id ? s.activeRoom?.othersReadAt : room.othersReadAt) ??
+      room.othersReadAt,
+  );
+
+  // Odaya girildiğinde okundu bilgisini sunucuya bildir
+  useEffect(() => {
+    markAsRead(room.id);
+  }, [room.id, markAsRead]);
+
   const messages = useMemo(() => {
     if (roomMsgs && roomMsgs.length > 0) return roomMsgs;
     if (activeRoomId === room.id && activeMsgs && activeMsgs.length > 0) return activeMsgs;
     return roomMsgs || activeMsgs || EMPTY_MESSAGES;
   }, [roomMsgs, activeMsgs, activeRoomId, room.id]);
+
+  // Yeni mesaj geldiğinde (başkasına aitse) okundu bilgisini gönder
+  useEffect(() => {
+    if (messages.length > 0) {
+      const latest = messages[0];
+      if (latest && latest.senderId !== currentUserId) {
+        markAsRead(room.id);
+      }
+    }
+  }, [messages.length, room.id, currentUserId, markAsRead]);
 
   const isDirect = room.type === 'DIRECT';
   const chatTitle = isDirect
@@ -234,11 +260,11 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({ room, onBack }) 
         style?: 'cancel' | 'destructive' | 'default';
         onPress: () => void;
       }[] = [
-        {
-          text: 'Yanıtla',
-          onPress: () => setReplyMessage(item),
-        },
-      ];
+          {
+            text: 'Yanıtla',
+            onPress: () => setReplyMessage(item),
+          },
+        ];
 
       if (isMe && item.type === 'TEXT') {
         options.push({
@@ -258,7 +284,7 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({ room, onBack }) 
         });
       }
 
-      options.push({ text: 'İptal', style: 'cancel', onPress: () => {} });
+      options.push({ text: 'İptal', style: 'cancel', onPress: () => { } });
 
       Alert.alert('Mesaj Seçenekleri', undefined, options);
     },
@@ -271,6 +297,11 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({ room, onBack }) 
   const giftedMessages = useMemo<IMessage[]>(() => {
     return messages.map((item) => {
       const isSystem = item.type === 'SYSTEM';
+      const isPending = !!item.isPending;
+      const isRead = Boolean(
+        currentOthersReadAt &&
+        new Date(currentOthersReadAt).getTime() >= new Date(item.createdAt).getTime(),
+      );
       return {
         _id: item.id,
         text: item.deletedAt ? '🚫 Bu mesaj silindi' : item.content,
@@ -281,18 +312,18 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({ room, onBack }) 
           avatar: item.sender?.avatarUrl || undefined,
         },
         system: isSystem,
-        sent: true,
-        received: !!room.othersReadAt,
+        sent: !isPending,
+        received: isRead,
         raw: item,
       } as IMessage & { raw: Message };
     });
-  }, [messages, room.othersReadAt]);
+  }, [messages, currentOthersReadAt]);
 
   return (
-    <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
+    <SafeAreaView style={styles.container} edges={['top', 'left', 'right', "bottom"]}>
       <KeyboardAvoidingView
         style={styles.keyboardAvoidingRoot}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        behavior={Platform.OS === 'ios' ? 'padding' : "height"}
         keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top : 0}
       >
         {/* ------------------------------------------------------------- */}
@@ -373,86 +404,86 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({ room, onBack }) 
           </View>
         </View>
 
-      {/* ------------------------------------------------------------- */}
-      {/* Live Voice Chat Header Banner (Sohbet Odaları için)           */}
-      {/* ------------------------------------------------------------- */}
-      {!isDirect && isVoiceActiveInThisRoom && (
-        <TouchableOpacity
-          style={[styles.liveVoiceBanner, isMeInVoice && { backgroundColor: '#0B291B', borderColor: '#10B98155' }]}
-          onPress={() => {
-            if (!isMeInVoice) {
-              handleVoiceJoin();
-            } else {
-              setVoiceSheetVisible(true);
-            }
-          }}
-          activeOpacity={0.85}
-        >
-          <View style={styles.voiceBannerContent}>
-            <View style={[styles.voiceWaveIconBg, isMeInVoice && { backgroundColor: '#10B981' }]}>
-              <Ionicons name={isMeInVoice ? 'volume-high' : 'mic'} size={16} color="#ffffff" />
+        {/* ------------------------------------------------------------- */}
+        {/* Live Voice Chat Header Banner (Sohbet Odaları için)           */}
+        {/* ------------------------------------------------------------- */}
+        {!isDirect && isVoiceActiveInThisRoom && (
+          <TouchableOpacity
+            style={[styles.liveVoiceBanner, isMeInVoice && { backgroundColor: '#0B291B', borderColor: '#10B98155' }]}
+            onPress={() => {
+              if (!isMeInVoice) {
+                handleVoiceJoin();
+              } else {
+                setVoiceSheetVisible(true);
+              }
+            }}
+            activeOpacity={0.85}
+          >
+            <View style={styles.voiceBannerContent}>
+              <View style={[styles.voiceWaveIconBg, isMeInVoice && { backgroundColor: '#10B981' }]}>
+                <Ionicons name={isMeInVoice ? 'volume-high' : 'mic'} size={16} color="#ffffff" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.voiceBannerTitle, isMeInVoice && { color: '#10B981' }]}>
+                  {isMeInVoice ? 'Sesli Sohbet Sürdürülüyor' : 'Canlı Sesli Sohbet'}
+                </Text>
+                <Text style={styles.voiceBannerSubtitle}>
+                  {activeVoiceCount > 0
+                    ? `${activeVoiceCount} kişi odada konuşuyor`
+                    : 'Dokunarak konuşmaya katılın'}
+                </Text>
+              </View>
             </View>
-            <View style={{ flex: 1 }}>
-              <Text style={[styles.voiceBannerTitle, isMeInVoice && { color: '#10B981' }]}>
-                {isMeInVoice ? 'Sesli Sohbet Sürdürülüyor' : 'Canlı Sesli Sohbet'}
-              </Text>
-              <Text style={styles.voiceBannerSubtitle}>
-                {activeVoiceCount > 0
-                  ? `${activeVoiceCount} kişi odada konuşuyor`
-                  : 'Dokunarak konuşmaya katılın'}
-              </Text>
+            <View style={[styles.joinBtnPill, isMeInVoice && { backgroundColor: '#10B981' }]}>
+              <Text style={styles.joinBtnText}>{isMeInVoice ? 'YÖNET' : 'KATIL'}</Text>
             </View>
-          </View>
-          <View style={[styles.joinBtnPill, isMeInVoice && { backgroundColor: '#10B981' }]}>
-            <Text style={styles.joinBtnText}>{isMeInVoice ? 'YÖNET' : 'KATIL'}</Text>
-          </View>
-        </TouchableOpacity>
-      )}
-
-      {/* ------------------------------------------------------------- */}
-      {/* Mesaj Beslemesi & Gifted Chat Loader                          */}
-      {/* ------------------------------------------------------------- */}
-      <ImageBackground
-        source={CHAT_BACKGROUND}
-        style={styles.chatArea}
-        imageStyle={styles.chatBackgroundImage}
-        resizeMode="cover"
-      >
-        {loadError && messages.length === 0 ? (
-          <View style={styles.giftedLoaderContainer}>
-            <View style={styles.emptyFeedIconBg}>
-              <Ionicons name="cloud-offline-outline" size={40} color={colors.textSecondary} />
-            </View>
-            <Text style={styles.emptyFeedTitle}>Sohbet geçmişi yüklenemedi</Text>
-            <Text style={styles.emptyFeedText}>Sunucu bağlantısı zaman aşımına uğramış olabilir.</Text>
-            <TouchableOpacity
-              style={styles.retryBtn}
-              onPress={() => loadChat(true)}
-              activeOpacity={0.8}
-            >
-              <Ionicons name="refresh" size={16} color="#FFFFFF" />
-              <Text style={styles.retryBtnText}>Tekrar Dene</Text>
-            </TouchableOpacity>
-          </View>
-        ) : loading && messages.length === 0 ? (
-          <View style={styles.giftedLoaderContainer}>
-            <ActivityIndicator size="large" color={colors.primaryLight} />
-            <Text style={styles.giftedLoaderText}>Mesajlar yükleniyor...</Text>
-          </View>
-        ) : (
-          <MessageFeed
-            messages={giftedMessages}
-            currentUserId={currentUserId || ''}
-            currentUserName={currentUserName || 'Kullanıcı'}
-            currentUserAvatar={currentUserAvatar || undefined}
-            isDirect={isDirect}
-            othersRead={!!room.othersReadAt}
-            loading={loading}
-            onLongPressMessage={handleMessageLongPress}
-            onCallPress={handleStartCall}
-          />
+          </TouchableOpacity>
         )}
-      </ImageBackground>
+
+        {/* ------------------------------------------------------------- */}
+        {/* Mesaj Beslemesi & Gifted Chat Loader                          */}
+        {/* ------------------------------------------------------------- */}
+        <ImageBackground
+          source={CHAT_BACKGROUND}
+          style={styles.chatArea}
+          imageStyle={styles.chatBackgroundImage}
+          resizeMode="cover"
+        >
+          {loadError && messages.length === 0 ? (
+            <View style={styles.giftedLoaderContainer}>
+              <View style={styles.emptyFeedIconBg}>
+                <Ionicons name="cloud-offline-outline" size={40} color={colors.textSecondary} />
+              </View>
+              <Text style={styles.emptyFeedTitle}>Sohbet geçmişi yüklenemedi</Text>
+              <Text style={styles.emptyFeedText}>Sunucu bağlantısı zaman aşımına uğramış olabilir.</Text>
+              <TouchableOpacity
+                style={styles.retryBtn}
+                onPress={() => loadChat(true)}
+                activeOpacity={0.8}
+              >
+                <Ionicons name="refresh" size={16} color="#FFFFFF" />
+                <Text style={styles.retryBtnText}>Tekrar Dene</Text>
+              </TouchableOpacity>
+            </View>
+          ) : loading && messages.length === 0 ? (
+            <View style={styles.giftedLoaderContainer}>
+              <ActivityIndicator size="large" color={colors.primaryLight} />
+              <Text style={styles.giftedLoaderText}>Mesajlar yükleniyor...</Text>
+            </View>
+          ) : (
+            <MessageFeed
+              messages={giftedMessages}
+              currentUserId={currentUserId || ''}
+              currentUserName={currentUserName || 'Kullanıcı'}
+              currentUserAvatar={currentUserAvatar || undefined}
+              isDirect={isDirect}
+              othersReadAt={currentOthersReadAt}
+              loading={loading}
+              onLongPressMessage={handleMessageLongPress}
+              onCallPress={handleStartCall}
+            />
+          )}
+        </ImageBackground>
 
         {/* Yanıtlama veya Düzenleme Banner'ı */}
         {(replyMessage || editingMessage) && (
@@ -510,7 +541,7 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({ room, onBack }) 
         <View
           style={[
             styles.inputContainer,
-            { paddingBottom: isKeyboardVisible ? 8 : Math.max(insets.bottom, 8) },
+
           ]}
         >
           <TouchableOpacity style={styles.mediaIconBtn} activeOpacity={0.7}>
@@ -592,7 +623,7 @@ const renderChatEmpty = () => (
 );
 
 const renderNoInputToolbar = () => null;
-const noop = () => {};
+const noop = () => { };
 
 const FEED_LIST_PROPS = {
   keyboardDismissMode: 'on-drag',
@@ -654,7 +685,7 @@ interface TextBubbleProps {
   item: Message;
   isMe: boolean;
   isDirect: boolean;
-  othersRead: boolean;
+  status: ChronoRingStatus;
   onLongPress: (item: Message) => void;
 }
 
@@ -662,7 +693,7 @@ const TextBubble = memo(function TextBubble({
   item,
   isMe,
   isDirect,
-  othersRead,
+  status,
   onLongPress,
 }: TextBubbleProps) {
   const isDeleted = !!item.deletedAt;
@@ -704,13 +735,8 @@ const TextBubble = memo(function TextBubble({
           <Text style={[styles.timeText, isMe ? styles.myTimeText : styles.otherTimeText]}>
             {formatTime(item.createdAt)}
           </Text>
-          {isMe && (
-            <Ionicons
-              name={othersRead ? 'checkmark-done' : 'checkmark'}
-              size={15}
-              color={othersRead ? colors.primaryLight : colors.bubbleSentTime}
-              style={styles.readCheckIcon}
-            />
+          {isMe && !isDeleted && (
+            <ChronoProgressRing status={status} size={12} />
           )}
         </View>
       </View>
@@ -724,7 +750,7 @@ interface MessageFeedProps {
   currentUserName: string;
   currentUserAvatar?: string;
   isDirect: boolean;
-  othersRead: boolean;
+  othersReadAt?: string | null;
   loading: boolean;
   onLongPressMessage: (item: Message) => void;
   onCallPress: (video?: boolean) => void;
@@ -736,7 +762,7 @@ const MessageFeed = memo(function MessageFeed({
   currentUserName,
   currentUserAvatar,
   isDirect,
-  othersRead,
+  othersReadAt,
   loading,
   onLongPressMessage,
   onCallPress,
@@ -777,17 +803,24 @@ const MessageFeed = memo(function MessageFeed({
         return <CallBubble item={item} isMe={isMe} isDirect={isDirect} onCallPress={onCallPress} />;
       }
 
+      const isPending = !!item.isPending;
+      const isRead = Boolean(
+        othersReadAt &&
+        new Date(othersReadAt).getTime() >= new Date(item.createdAt).getTime(),
+      );
+      const ringStatus: ChronoRingStatus = isPending ? 'pending' : isRead ? 'read' : 'sent';
+
       return (
         <TextBubble
           item={item}
           isMe={isMe}
           isDirect={isDirect}
-          othersRead={othersRead}
+          status={ringStatus}
           onLongPress={onLongPressMessage}
         />
       );
     },
-    [currentUserId, isDirect, othersRead, onLongPressMessage, onCallPress],
+    [currentUserId, isDirect, othersReadAt, onLongPressMessage, onCallPress],
   );
 
   return (
@@ -956,7 +989,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#080B14',
   },
   chatBackgroundImage: {
-    opacity: 0.95,
+    opacity: 0.55,
   },
   messagesList: {
     paddingHorizontal: 12,

@@ -79,6 +79,7 @@ export interface Message {
   deletedAt?: string | null;
   createdAt: string;
   sender: User;
+  isPending?: boolean;
 }
 
 export interface Room {

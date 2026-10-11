@@ -16,8 +16,10 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import * as ImagePicker from 'expo-image-picker';
 import { api } from '../services/api';
 import { useChatStore } from '../store/useChatStore';
+import { ChronoAvatar } from './ChronoAvatar';
 
 interface CreateRoomModalProps {
   visible: boolean;
@@ -35,10 +37,67 @@ export const CreateRoomModal: React.FC<CreateRoomModalProps> = ({
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [selectedIcon, setSelectedIcon] = useState('💬');
+  const [customIconUri, setCustomIconUri] = useState<string | null>(null);
+  const [uploadedIconUrl, setUploadedIconUrl] = useState<string | null>(null);
+  const [uploadingIcon, setUploadingIcon] = useState(false);
   const [loading, setLoading] = useState(false);
   const [nameFocused, setNameFocused] = useState(false);
   const [descFocused, setDescFocused] = useState(false);
-  const { fetchRooms, setActiveRoom } = useChatStore();
+  const { fetchRooms, setActiveRoom, uploadTempRoomIcon } = useChatStore();
+
+  const handlePickImage = async () => {
+    try {
+      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!permission.granted) {
+        Alert.alert(
+          'İzin Gerekli',
+          'Oda simgesi seçebilmek için galeri erişim iznine ihtiyacımız var.',
+        );
+        return;
+      }
+
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.85,
+      });
+
+      if (result.canceled || !result.assets || result.assets.length === 0) {
+        return;
+      }
+
+      const asset = result.assets[0];
+      setCustomIconUri(asset.uri);
+      setUploadingIcon(true);
+
+      const formData = new FormData();
+      const filename = asset.uri.split('/').pop() || 'room_icon.jpg';
+      const match = /\.(\w+)$/.exec(filename);
+      const type = match ? `image/${match[1]}` : 'image/jpeg';
+
+      formData.append('file', {
+        uri: asset.uri,
+        name: filename,
+        type,
+      } as any);
+
+      const uploaded = await uploadTempRoomIcon(formData);
+      setUploadedIconUrl(uploaded.iconUrl);
+    } catch (err: any) {
+      console.warn('Oda simgesi yükleme hatası:', err);
+      Alert.alert('Yükleme Hatası', err?.message || 'Görsel yüklenemedi');
+      setCustomIconUri(null);
+      setUploadedIconUrl(null);
+    } finally {
+      setUploadingIcon(false);
+    }
+  };
+
+  const handleRemoveImage = () => {
+    setCustomIconUri(null);
+    setUploadedIconUrl(null);
+  };
 
   const handleCreate = async () => {
     if (!name.trim()) {
@@ -46,21 +105,26 @@ export const CreateRoomModal: React.FC<CreateRoomModalProps> = ({
       return;
     }
 
+    if (uploadingIcon) {
+      Alert.alert('Lütfen Bekleyin', 'Oda simgesi yükleniyor, lütfen tamamlanmasını bekleyin.');
+      return;
+    }
+
     try {
       setLoading(true);
-      const roomName = `${selectedIcon} ${name.trim()}`;
+      // Eğer özel resim yüklendiyse ismi doğrudan kullan, yoksa emoji prefiksini ekle
+      const roomName = customIconUri ? name.trim() : `${selectedIcon} ${name.trim()}`;
 
       const res = await api.post('/rooms', {
         name: roomName,
         description: description.trim(),
+        iconUrl: uploadedIconUrl || undefined,
       });
 
       await fetchRooms();
       setActiveRoom(res.data);
       if (onRoomCreated) onRoomCreated(res.data);
-      setName('');
-      setDescription('');
-      onClose();
+      handleClose();
     } catch (err: any) {
       Alert.alert(
         'Hata',
@@ -74,6 +138,9 @@ export const CreateRoomModal: React.FC<CreateRoomModalProps> = ({
   const handleClose = () => {
     setName('');
     setDescription('');
+    setSelectedIcon('💬');
+    setCustomIconUri(null);
+    setUploadedIconUrl(null);
     onClose();
   };
 
@@ -111,28 +178,83 @@ export const CreateRoomModal: React.FC<CreateRoomModalProps> = ({
                   </Text>
 
                   <ScrollView showsVerticalScrollIndicator={false}>
-                    {/* SİMGE Başlığı */}
-                    <Text style={styles.sectionLabel}>SİMGE</Text>
+                    {/* ODA SİMGESİ VE FOTOĞRAF YÜKLEME ALANI */}
+                    <View style={styles.avatarPickerSection}>
+                      <TouchableOpacity
+                        style={styles.avatarButtonWrapper}
+                        onPress={handlePickImage}
+                        activeOpacity={0.8}
+                        disabled={uploadingIcon}
+                      >
+                        <ChronoAvatar
+                          size={76}
+                          name={name.trim() || 'Oda'}
+                          emoji={customIconUri ? undefined : selectedIcon}
+                          uri={customIconUri}
+                          badge="camera"
+                        />
+                        {uploadingIcon && (
+                          <View style={styles.avatarLoadingOverlay}>
+                            <ActivityIndicator size="small" color="#FFFFFF" />
+                          </View>
+                        )}
+                      </TouchableOpacity>
 
-                    {/* Simge Seçim Listesi */}
-                    <View style={styles.iconRow}>
-                      {PRESET_ICONS.map((icon) => {
-                        const isSelected = selectedIcon === icon;
-                        return (
+                      <View style={styles.avatarActionButtons}>
+                        <TouchableOpacity
+                          style={styles.pickPhotoBtn}
+                          onPress={handlePickImage}
+                          activeOpacity={0.7}
+                          disabled={uploadingIcon}
+                        >
+                          <Ionicons
+                            name={customIconUri ? 'sync-outline' : 'image-outline'}
+                            size={16}
+                            color="#38BDF8"
+                          />
+                          <Text style={styles.pickPhotoBtnText}>
+                            {customIconUri ? 'Görseli Değiştir' : 'Fotoğraf Seç'}
+                          </Text>
+                        </TouchableOpacity>
+
+                        {customIconUri && (
                           <TouchableOpacity
-                            key={icon}
-                            style={[
-                              styles.iconItem,
-                              isSelected && styles.iconItemSelected,
-                            ]}
-                            onPress={() => setSelectedIcon(icon)}
+                            style={styles.removePhotoBtn}
+                            onPress={handleRemoveImage}
                             activeOpacity={0.7}
+                            disabled={uploadingIcon}
                           >
-                            <Text style={styles.iconEmoji}>{icon}</Text>
+                            <Ionicons name="trash-outline" size={14} color="#EF4444" />
+                            <Text style={styles.removePhotoBtnText}>Kaldır</Text>
                           </TouchableOpacity>
-                        );
-                      })}
+                        )}
+                      </View>
                     </View>
+
+                    {/* Simge / Emoji Seçimi (Yalnızca özel resim seçilmemişse) */}
+                    {!customIconUri && (
+                      <>
+                        <Text style={styles.sectionLabel}>VEYA EMOJİ SEÇİN</Text>
+                        <View style={styles.iconRow}>
+                          {PRESET_ICONS.map((icon) => {
+                            const isSelected = selectedIcon === icon;
+                            return (
+                              <TouchableOpacity
+                                key={icon}
+                                style={[
+                                  styles.iconItem,
+                                  isSelected && styles.iconItemSelected,
+                                ]}
+                                onPress={() => setSelectedIcon(icon)}
+                                activeOpacity={0.7}
+                              >
+                                <Text style={styles.iconEmoji}>{icon}</Text>
+                              </TouchableOpacity>
+                            );
+                          })}
+                        </View>
+                      </>
+                    )}
 
                     {/* Oda Adı Giriş Kartı */}
                     <View
@@ -186,12 +308,15 @@ export const CreateRoomModal: React.FC<CreateRoomModalProps> = ({
 
                     {/* Odayı Aç Butonu */}
                     <TouchableOpacity
-                      style={[styles.openRoomBtn, loading && styles.btnDisabled]}
+                      style={[
+                        styles.openRoomBtn,
+                        (loading || uploadingIcon) && styles.btnDisabled,
+                      ]}
                       onPress={handleCreate}
-                      disabled={loading}
+                      disabled={loading || uploadingIcon}
                       activeOpacity={0.85}
                     >
-                      {loading ? (
+                      {loading || uploadingIcon ? (
                         <ActivityIndicator color="#FFFFFF" />
                       ) : (
                         <View style={styles.openRoomBtnContent}>
@@ -371,5 +496,64 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255, 255, 255, 0.2)',
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  avatarPickerSection: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 20,
+    marginTop: 4,
+  },
+  avatarButtonWrapper: {
+    position: 'relative',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  avatarLoadingOverlay: {
+    position: 'absolute',
+    width: 76,
+    height: 76,
+    borderRadius: 38,
+    backgroundColor: 'rgba(11, 15, 26, 0.7)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 10,
+  },
+  avatarActionButtons: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginTop: 12,
+  },
+  pickPhotoBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: 'rgba(56, 189, 248, 0.12)',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: 'rgba(56, 189, 248, 0.25)',
+  },
+  pickPhotoBtnText: {
+    color: '#38BDF8',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  removePhotoBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: 'rgba(239, 68, 68, 0.12)',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: 'rgba(239, 68, 68, 0.25)',
+  },
+  removePhotoBtnText: {
+    color: '#EF4444',
+    fontSize: 13,
+    fontWeight: '600',
   },
 });

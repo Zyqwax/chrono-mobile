@@ -13,6 +13,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import * as ImagePicker from 'expo-image-picker';
 import { api } from '../services/api';
 import { Room } from '../types';
 import { useChatStore } from '../store/useChatStore';
@@ -34,6 +35,7 @@ export const RoomInfoModal: React.FC<RoomInfoModalProps> = ({
 }) => {
   const [room, setRoom] = useState<Room | null>(null);
   const [loading, setLoading] = useState(false);
+  const [uploadingIcon, setUploadingIcon] = useState(false);
   const [editingName, setEditingName] = useState(false);
   const [newName, setNewName] = useState('');
   const [addMemberVisible, setAddMemberVisible] = useState(false);
@@ -45,6 +47,8 @@ export const RoomInfoModal: React.FC<RoomInfoModalProps> = ({
     deleteRoom,
     startCall,
     joinRoomVoice,
+    uploadRoomIcon,
+    removeRoomIcon,
   } = useChatStore();
 
   useEffect(() => {
@@ -82,6 +86,88 @@ export const RoomInfoModal: React.FC<RoomInfoModalProps> = ({
       fetchRooms();
     } catch (err: any) {
       Alert.alert('Hata', err.response?.data?.message || 'İsim güncellenemedi');
+    }
+  };
+
+  const handleRoomAvatarPress = () => {
+    if (!isOwner || isDirect) return;
+
+    if (room?.iconUrl) {
+      Alert.alert('Oda Simgesi', 'Oda görselini güncellemek veya kaldırmak ister misiniz?', [
+        {
+          text: 'Yeni Fotoğraf Seç',
+          onPress: handlePickAndUploadRoomIcon,
+        },
+        {
+          text: 'Fotoğrafı Kaldır',
+          style: 'destructive',
+          onPress: handleRemoveRoomIcon,
+        },
+        {
+          text: 'İptal',
+          style: 'cancel',
+        },
+      ]);
+    } else {
+      handlePickAndUploadRoomIcon();
+    }
+  };
+
+  const handlePickAndUploadRoomIcon = async () => {
+    try {
+      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!permission.granted) {
+        Alert.alert('İzin Gerekli', 'Fotoğraf seçebilmek için galeri iznine ihtiyacımız var.');
+        return;
+      }
+
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.85,
+      });
+
+      if (result.canceled || !result.assets || result.assets.length === 0) {
+        return;
+      }
+
+      const asset = result.assets[0];
+      setUploadingIcon(true);
+
+      const formData = new FormData();
+      const filename = asset.uri.split('/').pop() || 'room_icon.jpg';
+      const match = /\.(\w+)$/.exec(filename);
+      const type = match ? `image/${match[1]}` : 'image/jpeg';
+
+      formData.append('file', {
+        uri: asset.uri,
+        name: filename,
+        type,
+      } as any);
+
+      const updated = await uploadRoomIcon(roomId, formData);
+      setRoom((prev) => (prev ? { ...prev, iconUrl: updated.iconUrl } : null));
+      await fetchRooms();
+      Alert.alert('Başarılı', 'Oda simgesi güncellendi.');
+    } catch (err: any) {
+      Alert.alert('Hata', err?.response?.data?.message || err?.message || 'Fotoğraf yüklenemedi');
+    } finally {
+      setUploadingIcon(false);
+    }
+  };
+
+  const handleRemoveRoomIcon = async () => {
+    try {
+      setUploadingIcon(true);
+      await removeRoomIcon(roomId);
+      setRoom((prev) => (prev ? { ...prev, iconUrl: null } : null));
+      await fetchRooms();
+      Alert.alert('Başarılı', 'Oda simgesi kaldırıldı.');
+    } catch (err: any) {
+      Alert.alert('Hata', err?.response?.data?.message || err?.message || 'Fotoğraf kaldırılamadı');
+    } finally {
+      setUploadingIcon(false);
     }
   };
 
@@ -284,12 +370,39 @@ export const RoomInfoModal: React.FC<RoomInfoModalProps> = ({
             >
               {/* Center Avatar */}
               <View style={styles.centerAvatarSection}>
-                <ChronoAvatar
-                  size={96}
-                  name={cleanRoomName || 'Oda'}
-                  emoji={roomEmoji}
-                  uri={room?.iconUrl}
-                />
+                <TouchableOpacity
+                  disabled={!isOwner || uploadingIcon}
+                  onPress={handleRoomAvatarPress}
+                  activeOpacity={0.8}
+                  style={styles.avatarTouchWrapper}
+                >
+                  <ChronoAvatar
+                    size={96}
+                    name={cleanRoomName || 'Oda'}
+                    emoji={roomEmoji}
+                    uri={room?.iconUrl}
+                    badge={isOwner ? 'camera' : 'none'}
+                  />
+                  {uploadingIcon && (
+                    <View style={styles.avatarLoadingOverlay}>
+                      <ActivityIndicator size="small" color="#FFFFFF" />
+                    </View>
+                  )}
+                </TouchableOpacity>
+
+                {isOwner && (
+                  <TouchableOpacity
+                    onPress={handleRoomAvatarPress}
+                    activeOpacity={0.7}
+                    style={styles.changeAvatarBtn}
+                    disabled={uploadingIcon}
+                  >
+                    <Ionicons name="camera-outline" size={14} color="#38BDF8" />
+                    <Text style={styles.changeAvatarBtnText}>
+                      {room?.iconUrl ? 'Fotoğrafı Değiştir' : 'Fotoğraf Ekle'}
+                    </Text>
+                  </TouchableOpacity>
+                )}
               </View>
 
               {/* Başlık ve Düzenle */}
@@ -654,5 +767,37 @@ const styles = StyleSheet.create({
     backgroundColor: '#2563EB',
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  avatarTouchWrapper: {
+    position: 'relative',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  avatarLoadingOverlay: {
+    position: 'absolute',
+    width: 96,
+    height: 96,
+    borderRadius: 48,
+    backgroundColor: 'rgba(11, 15, 26, 0.7)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 10,
+  },
+  changeAvatarBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: 'rgba(56, 189, 248, 0.12)',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(56, 189, 248, 0.25)',
+    marginTop: 10,
+  },
+  changeAvatarBtnText: {
+    color: '#38BDF8',
+    fontSize: 12,
+    fontWeight: '600',
   },
 });

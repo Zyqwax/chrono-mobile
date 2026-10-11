@@ -20,6 +20,7 @@ import { Room } from '../types';
 import { useChatStore } from '../store/useChatStore';
 import { CreateRoomModal } from './CreateRoomModal';
 import { ChronoAvatar } from './ChronoAvatar';
+import { ChronoProgressRing } from './ChronoProgressRing';
 import { chronoTheme } from '../theme/colors';
 import { api } from '../services/api';
 import { useShallow } from 'zustand/react/shallow';
@@ -742,11 +743,16 @@ const RoomItem = memo(function RoomItem({
 
           <View style={styles.metaRight}>
             {isMine && (
-              <Ionicons
-                name={item.othersReadAt ? 'checkmark-done' : 'checkmark'}
-                size={15}
-                color={item.othersReadAt ? colors.primaryLight : colors.textSecondary}
-                style={styles.readIcon}
+              <ChronoProgressRing
+                status={
+                  item.othersReadAt &&
+                  item.lastMessage?.createdAt &&
+                  new Date(item.othersReadAt).getTime() >=
+                    new Date(item.lastMessage.createdAt).getTime()
+                    ? 'read'
+                    : 'sent'
+                }
+                size={11}
               />
             )}
             <Text style={styles.timestamp}>
@@ -1055,9 +1061,9 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   brandIcon: {
-    width: 32,
-    height: 32,
-    borderRadius: 8,
+    width: 40,
+    height: 40,
+    borderRadius: 10,
   },
   headerActions: {
     flexDirection: 'row',

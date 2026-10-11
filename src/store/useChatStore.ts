@@ -145,8 +145,29 @@ export const useChatStore = create<ChatStore>((set, get) => ({
 
       // 1. Yeni mesaj geldiğinde
       socket.on('new_message', (message: Message) => {
+        // Eğer bu mesaj bizim az önce gönderdiğimiz geçici (isPending) mesajsa temizle
+        set((state) => {
+          const rMsgs = state.roomMessages[message.roomId] || [];
+          const hasMatchingTemp = rMsgs.some(
+            (m) => m.isPending && m.content === message.content && m.senderId === message.senderId,
+          );
+          if (hasMatchingTemp) {
+            const nextRMsgs = rMsgs.filter(
+              (m) => !(m.isPending && m.content === message.content && m.senderId === message.senderId),
+            );
+            const nextActive = state.messages.filter(
+              (m) => !(m.isPending && m.content === message.content && m.senderId === message.senderId),
+            );
+            return {
+              roomMessages: { ...state.roomMessages, [message.roomId]: nextRMsgs },
+              messages: nextActive,
+            };
+          }
+          return state;
+        });
+
         const { activeRoom, addMessage, rooms } = get();
-        // Odaya ait mesaj havuzuna her durumda ekle (ekran kapalı veya arka planda olsa bile)
+        // Odaya ait mesaj havuzuna her durumda ekle
         addMessage(message);
 
         if (activeRoom && message.roomId === activeRoom.id) {
@@ -279,12 +300,16 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         });
       });
 
-      // Karşı tarafın okuduğu bilgisi (✓✓)
+      // Karşı tarafın okuduğu bilgisi (Halka 360° dolumu)
       socket.on('messages_read', ({ roomId, readAt }: { roomId: string; readAt: string }) => {
         set((state) => ({
           rooms: state.rooms.map((r) =>
             r.id === roomId ? { ...r, othersReadAt: readAt } : r,
           ),
+          activeRoom:
+            state.activeRoom?.id === roomId
+              ? { ...state.activeRoom, othersReadAt: readAt }
+              : state.activeRoom,
         }));
       });
 
@@ -892,14 +917,43 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   },
 
   sendMessage: async (roomId: string, content: string, replyToId?: string) => {
+    const currentUser = get().currentUser;
+    const tempId = `temp_${Date.now()}`;
+    const nowIso = new Date().toISOString();
+
+    const optimisticMessage: Message = {
+      id: tempId,
+      roomId,
+      senderId: currentUser?.id || 'me',
+      content,
+      replyToId: replyToId || null,
+      createdAt: nowIso,
+      type: 'TEXT',
+      sender: currentUser || { id: 'me', username: 'me', displayName: 'Ben' },
+      isPending: true,
+    };
+
+    get().addMessage(optimisticMessage);
+
     const socket = getSocket();
     if (socket && socket.connected) {
       socket.emit(
         'send_message',
-        { roomId, content, replyToId },
+        { roomId, content, replyToId, tempId },
         (ack: any) => {
           if (ack?.ok && ack?.message) {
-            get().addMessage(ack.message);
+            set((state) => {
+              const rMsgs = (state.roomMessages[roomId] || []).map((m) =>
+                m.id === tempId ? { ...ack.message, isPending: false } : m,
+              );
+              const activeMsgs = state.messages.map((m) =>
+                m.id === tempId ? { ...ack.message, isPending: false } : m,
+              );
+              return {
+                roomMessages: { ...state.roomMessages, [roomId]: rMsgs },
+                messages: activeMsgs,
+              };
+            });
           }
         },
       );
@@ -909,7 +963,18 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           content,
           replyToId,
         });
-        get().addMessage(res.data);
+        set((state) => {
+          const rMsgs = (state.roomMessages[roomId] || []).map((m) =>
+            m.id === tempId ? { ...res.data, isPending: false } : m,
+          );
+          const activeMsgs = state.messages.map((m) =>
+            m.id === tempId ? { ...res.data, isPending: false } : m,
+          );
+          return {
+            roomMessages: { ...state.roomMessages, [roomId]: rMsgs },
+            messages: activeMsgs,
+          };
+        });
       } catch (err) {
         console.error('sendMessage error:', err);
       }
