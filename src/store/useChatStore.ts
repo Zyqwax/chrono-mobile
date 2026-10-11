@@ -17,6 +17,7 @@ import {
   registerForPushNotificationsAsync,
 } from '../services/notifications';
 import { liveKitService } from '../services/livekit';
+import { localDb } from '../services/localDb';
 
 const STORAGE_TOKEN_KEY = '@chrono_auth_token';
 const STORAGE_USER_KEY = '@chrono_auth_user';
@@ -109,6 +110,24 @@ export const useChatStore = create<ChatStore>((set, get) => ({
 
   initAuth: async () => {
     try {
+      // 1. Yerel SQLite'tan tüm odaların son mesajlarını anında önbelleğe al (0 ms anında render)
+      localDb
+        .getLatestMessagesForAllRooms()
+        .then((latestMap) => {
+          if (Object.keys(latestMap).length > 0) {
+            set((state) => {
+              const nextMap = { ...state.roomMessages };
+              for (const [rId, msg] of Object.entries(latestMap)) {
+                if (!nextMap[rId] || nextMap[rId].length === 0) {
+                  nextMap[rId] = [msg];
+                }
+              }
+              return { roomMessages: nextMap };
+            });
+          }
+        })
+        .catch(console.warn);
+
       const [token, userStr] = await Promise.all([
         AsyncStorage.getItem(STORAGE_TOKEN_KEY),
         AsyncStorage.getItem(STORAGE_USER_KEY),
@@ -767,6 +786,21 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         socket.emit('join_room', { roomId: room.id });
         get().markAsRead(room.id);
       }
+
+      // Bellek boşsa yerel SQLite'tan hemen 0ms'de yükle
+      if (cached.length === 0) {
+        localDb
+          .getMessages(room.id, 40)
+          .then((localMsgs) => {
+            if (localMsgs.length > 0 && get().activeRoom?.id === room.id) {
+              set((state) => ({
+                messages: localMsgs,
+                roomMessages: { ...state.roomMessages, [room.id]: localMsgs },
+              }));
+            }
+          })
+          .catch(console.warn);
+      }
     }
   },
 
@@ -856,6 +890,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   },
 
   clearRoomHistory: async (roomId: string) => {
+    void localDb.clearRoomMessages(roomId);
     await api.post(`/rooms/${roomId}/clear`);
     set((state) => {
       const nextRoomMessages = { ...state.roomMessages };
@@ -977,6 +1012,9 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   roomMessages: {},
   setMessages: (messages) => set({ messages }),
   addMessage: (message) => {
+    if (!message.isPending) {
+      void localDb.saveMessage(message);
+    }
     set((state) => {
       const roomId = message.roomId;
       const roomMsgs = state.roomMessages[roomId] || [];
@@ -1004,39 +1042,121 @@ export const useChatStore = create<ChatStore>((set, get) => ({
 
   fetchMessages: async (roomId: string, before?: string): Promise<boolean> => {
     try {
+      // 1. Sayfalama (Eski mesajlara yukarı kaydırma):
+      if (before) {
+        const beforeTs = new Date(before).getTime();
+        const localOlder = await localDb.getMessages(roomId, 40, beforeTs);
+
+        if (localOlder.length > 0) {
+          set((state) => {
+            const existingForRoom = state.roomMessages[roomId] || [];
+            const existingIds = new Set(existingForRoom.map((m) => m.id));
+            const filteredNew = localOlder.filter((m) => !existingIds.has(m.id));
+            const mergedRoomMessages = [...existingForRoom, ...filteredNew];
+            const shouldUpdateActive = !state.activeRoom || state.activeRoom.id === roomId;
+
+            return {
+              roomMessages: {
+                ...state.roomMessages,
+                [roomId]: mergedRoomMessages,
+              },
+              ...(shouldUpdateActive ? { messages: mergedRoomMessages } : {}),
+            };
+          });
+          return true;
+        }
+
+        const res = await api.get(`/messages/room/${roomId}`, {
+          params: { limit: 40, before },
+        });
+        const serverOlder: Message[] = res.data || [];
+        if (serverOlder.length > 0) {
+          void localDb.saveMessages(serverOlder);
+        }
+
+        set((state) => {
+          const existingForRoom = state.roomMessages[roomId] || [];
+          const existingIds = new Set(existingForRoom.map((m) => m.id));
+          const filteredNew = serverOlder.filter((m) => !existingIds.has(m.id));
+          const mergedRoomMessages = [...existingForRoom, ...filteredNew];
+          const shouldUpdateActive = !state.activeRoom || state.activeRoom.id === roomId;
+
+          return {
+            roomMessages: {
+              ...state.roomMessages,
+              [roomId]: mergedRoomMessages,
+            },
+            ...(shouldUpdateActive ? { messages: mergedRoomMessages } : {}),
+          };
+        });
+        return true;
+      }
+
+      // 2. İlk açılış (Odaya giriş):
+      const localMsgs = await localDb.getMessages(roomId, 40);
+      if (localMsgs.length > 0) {
+        set((state) => {
+          const shouldUpdateActive = !state.activeRoom || state.activeRoom.id === roomId;
+          return {
+            roomMessages: {
+              ...state.roomMessages,
+              [roomId]: localMsgs,
+            },
+            ...(shouldUpdateActive ? { messages: localMsgs } : {}),
+          };
+        });
+
+        const newest = localMsgs[0];
+        try {
+          const res = await api.get(`/messages/room/${roomId}`, {
+            params: { limit: 40, after: newest.createdAt },
+          });
+          const newDelta: Message[] = res.data || [];
+          if (newDelta.length > 0) {
+            void localDb.saveMessages(newDelta);
+            set((state) => {
+              const current = state.roomMessages[roomId] || localMsgs;
+              const deltaIds = new Set(newDelta.map((m) => m.id));
+              const filteredOld = current.filter((m) => !deltaIds.has(m.id));
+              const merged = [...newDelta, ...filteredOld].sort(
+                (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+              );
+              const shouldUpdateActive = !state.activeRoom || state.activeRoom.id === roomId;
+              return {
+                roomMessages: { ...state.roomMessages, [roomId]: merged },
+                ...(shouldUpdateActive ? { messages: merged } : {}),
+              };
+            });
+          }
+        } catch {
+          // Ağ hatası olsa bile local mesajlar zaten ekranda, sessizce geç
+        }
+        return true;
+      }
+
+      // 3. Yerelde henüz hiç mesaj yoksa (cihaza ilk kez yüklendiğinde) sunucudan tam çek
       const res = await api.get(`/messages/room/${roomId}`, {
-        params: { limit: 40, before },
+        params: { limit: 40 },
       });
       const newMessages: Message[] = res.data || [];
+      if (newMessages.length > 0) {
+        void localDb.saveMessages(newMessages);
+      }
 
       set((state) => {
         const existingForRoom = state.roomMessages[roomId] || [];
-        let mergedRoomMessages: Message[];
-
-        if (before) {
-          const existingIds = new Set(existingForRoom.map((m) => m.id));
-          const filteredNew = newMessages.filter((m) => !existingIds.has(m.id));
-          mergedRoomMessages = [...existingForRoom, ...filteredNew];
-        } else {
-          // İlk yükleme: gelen sunucu mesajları ile varsa yerel soket/optimistik mesajları birleştir
-          const newIds = new Set(newMessages.map((m) => m.id));
-          const localOnly = existingForRoom.filter((m) => !newIds.has(m.id));
-          mergedRoomMessages = [...localOnly, ...newMessages].sort(
-            (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
-          );
-        }
-
-        const updatedRoomMessages = {
-          ...state.roomMessages,
-          [roomId]: mergedRoomMessages,
-        };
-
-        // Eğer kullanıcı hâlâ bu odadaysa VEYA aktif oda henüz tanımlanmadıysa aktif listeyi de güncelle
-        const shouldUpdateActive =
-          !state.activeRoom || state.activeRoom.id === roomId;
+        const newIds = new Set(newMessages.map((m) => m.id));
+        const localOnly = existingForRoom.filter((m) => !newIds.has(m.id));
+        const mergedRoomMessages = [...localOnly, ...newMessages].sort(
+          (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+        );
+        const shouldUpdateActive = !state.activeRoom || state.activeRoom.id === roomId;
 
         return {
-          roomMessages: updatedRoomMessages,
+          roomMessages: {
+            ...state.roomMessages,
+            [roomId]: mergedRoomMessages,
+          },
           ...(shouldUpdateActive ? { messages: mergedRoomMessages } : {}),
         };
       });
@@ -1073,6 +1193,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         { roomId, content, replyToId, tempId },
         (ack: any) => {
           if (ack?.ok && ack?.message) {
+            void localDb.saveMessage(ack.message);
             set((state) => {
               const rMsgs = (state.roomMessages[roomId] || []).map((m) =>
                 m.id === tempId ? { ...ack.message, isPending: false } : m,
@@ -1094,6 +1215,9 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           content,
           replyToId,
         });
+        if (res.data) {
+          void localDb.saveMessage(res.data);
+        }
         set((state) => {
           const rMsgs = (state.roomMessages[roomId] || []).map((m) =>
             m.id === tempId ? { ...res.data, isPending: false } : m,
@@ -1116,6 +1240,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     try {
       const res = await api.patch(`/messages/${messageId}`, { content });
       const updatedMsg: Message = res.data;
+      void localDb.updateMessageContent(messageId, content, updatedMsg.editedAt || undefined);
       set((state) => {
         const roomId = updatedMsg.roomId;
         const roomMsgs = (state.roomMessages[roomId] || []).map((m) =>
@@ -1137,6 +1262,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   deleteMessage: async (messageId: string) => {
     try {
       await api.delete(`/messages/${messageId}`);
+      void localDb.deleteMessage(messageId, true);
       set((state) => {
         const nextRoomMessages = { ...state.roomMessages };
         for (const rId of Object.keys(nextRoomMessages)) {
