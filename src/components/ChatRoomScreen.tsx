@@ -29,7 +29,21 @@ import { useShallow } from 'zustand/react/shallow';
 
 const CHAT_BACKGROUND = require('../../assets/chrono-chat-background.png');
 const EMPTY_MESSAGES: Message[] = [];
-import { formatTime } from '../utils/format';
+import { formatTime, formatChatDay } from '../utils/format';
+
+const isSameCalendarDay = (
+  d1?: Date | string | number | null,
+  d2?: Date | string | number | null,
+) => {
+  if (!d1 || !d2) return false;
+  const date1 = new Date(d1);
+  const date2 = new Date(d2);
+  return (
+    date1.getFullYear() === date2.getFullYear() &&
+    date1.getMonth() === date2.getMonth() &&
+    date1.getDate() === date2.getDate()
+  );
+};
 
 const { colors } = chronoTheme;
 
@@ -357,14 +371,14 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({ room, onBack }) 
               </Text>
               <Text style={styles.roomStatus} numberOfLines={1}>
                 {typingUsers.length > 0 ? (
-                  <Text style={{ color: colors.primaryLight }}>
+                  <Text style={{ color: '#38BDF8' }}>
                     {typingUsers.map((u) => u.displayName).join(', ')} yazıyor...
                   </Text>
                 ) : isDirect ? (
                   isPeerOnline ? (
                     <Text style={{ color: '#10B981' }}>çevrimiçi</Text>
                   ) : (
-                    <Text style={{ color: '#38BDF8' }}>son görülme yakınlarda</Text>
+                    <Text style={{ color: '#6EE7B7' }}>son görülme yakınlarda</Text>
                   )
                 ) : (
                   `${room.membersCount || room.members?.length || 2} üye · ${activeVoiceCount > 0 ? `${activeVoiceCount} çevrimiçi` : '1 çevrimiçi'}`
@@ -373,7 +387,7 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({ room, onBack }) 
             </View>
           </TouchableOpacity>
 
-          {/* Header Actions: DM -> Sesli & Görüntülü Arama; Oda -> 3 Nokta */}
+          {/* Header Actions: DM -> Sesli & Görüntülü Arama; Oda -> [Sesli] Butonu + 3 Nokta */}
           <View style={styles.headerActions}>
             {isDirect ? (
               <>
@@ -382,63 +396,40 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({ room, onBack }) 
                   onPress={() => handleStartCall(false)}
                   activeOpacity={0.7}
                 >
-                  <Ionicons name="call-outline" size={21} color={colors.textPrimary} />
+                  <Ionicons name="call-outline" size={21} color="#FFFFFF" />
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={styles.actionIconBtn}
                   onPress={() => handleStartCall(true)}
                   activeOpacity={0.7}
                 >
-                  <Ionicons name="videocam-outline" size={22} color={colors.textPrimary} />
+                  <Ionicons name="videocam-outline" size={22} color="#FFFFFF" />
                 </TouchableOpacity>
               </>
             ) : (
-              <TouchableOpacity
-                style={styles.actionIconBtn}
-                onPress={() => setInfoModalVisible(true)}
-                activeOpacity={0.7}
-              >
-                <Ionicons name="ellipsis-vertical" size={20} color={colors.textPrimary} />
-              </TouchableOpacity>
+              <>
+                <TouchableOpacity
+                  style={[
+                    styles.headerVoicePillBtn,
+                    isVoiceActiveInThisRoom && styles.headerVoicePillActive,
+                  ]}
+                  onPress={handleVoiceJoin}
+                  activeOpacity={0.8}
+                >
+                  <Ionicons name="mic" size={15} color="#FFFFFF" style={{ marginRight: 5 }} />
+                  <Text style={styles.headerVoicePillText}>Sesli</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.actionIconBtn}
+                  onPress={() => setInfoModalVisible(true)}
+                  activeOpacity={0.7}
+                >
+                  <Ionicons name="ellipsis-vertical" size={20} color="#FFFFFF" />
+                </TouchableOpacity>
+              </>
             )}
           </View>
         </View>
-
-        {/* ------------------------------------------------------------- */}
-        {/* Live Voice Chat Header Banner (Sohbet Odaları için)           */}
-        {/* ------------------------------------------------------------- */}
-        {!isDirect && isVoiceActiveInThisRoom && (
-          <TouchableOpacity
-            style={[styles.liveVoiceBanner, isMeInVoice && { backgroundColor: '#0B291B', borderColor: '#10B98155' }]}
-            onPress={() => {
-              if (!isMeInVoice) {
-                handleVoiceJoin();
-              } else {
-                setVoiceSheetVisible(true);
-              }
-            }}
-            activeOpacity={0.85}
-          >
-            <View style={styles.voiceBannerContent}>
-              <View style={[styles.voiceWaveIconBg, isMeInVoice && { backgroundColor: '#10B981' }]}>
-                <Ionicons name={isMeInVoice ? 'volume-high' : 'mic'} size={16} color="#ffffff" />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={[styles.voiceBannerTitle, isMeInVoice && { color: '#10B981' }]}>
-                  {isMeInVoice ? 'Sesli Sohbet Sürdürülüyor' : 'Canlı Sesli Sohbet'}
-                </Text>
-                <Text style={styles.voiceBannerSubtitle}>
-                  {activeVoiceCount > 0
-                    ? `${activeVoiceCount} kişi odada konuşuyor`
-                    : 'Dokunarak konuşmaya katılın'}
-                </Text>
-              </View>
-            </View>
-            <View style={[styles.joinBtnPill, isMeInVoice && { backgroundColor: '#10B981' }]}>
-              <Text style={styles.joinBtnText}>{isMeInVoice ? 'YÖNET' : 'KATIL'}</Text>
-            </View>
-          </TouchableOpacity>
-        )}
 
         {/* ------------------------------------------------------------- */}
         {/* Mesaj Beslemesi & Gifted Chat Loader                          */}
@@ -510,45 +501,19 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({ room, onBack }) 
         )}
 
         {/* ------------------------------------------------------------- */}
-        {/* Oda İçin Alt Sesli Sohbet Kartı (Page 5 Tasarımı)              */}
-        {/* ------------------------------------------------------------- */}
-        {!isDirect && (
-          <View style={styles.dockedVoiceCard}>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.dockedVoiceTitle}>Sesli sohbet</Text>
-              <Text style={styles.dockedVoiceSubtitle}>
-                {activeVoiceCount > 0
-                  ? `${activeVoiceCount} kişi odada konuşuyor`
-                  : 'Şu an kimse yok'}
-              </Text>
-            </View>
-            <TouchableOpacity
-              style={styles.dockedVoiceBtn}
-              onPress={handleVoiceJoin}
-              activeOpacity={0.85}
-            >
-              <Ionicons name="mic" size={15} color="#FFFFFF" style={{ marginRight: 5 }} />
-              <Text style={styles.dockedVoiceBtnText}>
-                {isMeInVoice ? 'Yönet' : activeVoiceCount > 0 ? 'Katıl' : 'Başlat'}
-              </Text>
-            </TouchableOpacity>
-          </View>
-        )}
-
-        {/* ------------------------------------------------------------- */}
         {/* Bottom Input Bar                                              */}
         {/* ------------------------------------------------------------- */}
         <View
           style={[
             styles.inputContainer,
-
+            { paddingBottom: Math.max(insets.bottom, 8) },
           ]}
         >
-          <TouchableOpacity style={styles.mediaIconBtn} activeOpacity={0.7}>
-            <Ionicons name="camera-outline" size={22} color="#8A93A8" />
-          </TouchableOpacity>
-
           <View style={styles.inputBox}>
+            <TouchableOpacity style={styles.inputInnerBtn} activeOpacity={0.7}>
+              <Ionicons name="happy-outline" size={24} color="#8A93A8" />
+            </TouchableOpacity>
+
             <TextInput
               style={styles.textInput}
               placeholder="Mesaj yaz"
@@ -558,8 +523,8 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({ room, onBack }) 
               multiline
             />
 
-            <TouchableOpacity style={styles.attachBtn} activeOpacity={0.7}>
-              <Ionicons name="attach" size={22} color="#8A93A8" />
+            <TouchableOpacity style={styles.inputInnerBtn} activeOpacity={0.7}>
+              <Ionicons name="attach" size={24} color="#8A93A8" />
             </TouchableOpacity>
           </View>
 
@@ -571,8 +536,9 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({ room, onBack }) 
           >
             <Ionicons
               name={inputText.trim() ? 'send' : 'mic'}
-              size={18}
+              size={19}
               color="#FFFFFF"
+              style={inputText.trim() ? { marginLeft: 2 } : undefined}
             />
           </TouchableOpacity>
         </View>
@@ -671,12 +637,45 @@ const CallBubble = memo(function CallBubble({ item, isMe, isDirect, onCallPress 
       >
         <Ionicons
           name={video ? 'videocam-outline' : 'call-outline'}
-          size={16}
+          size={15}
           color={video ? '#38BDF8' : '#10B981'}
-          style={{ marginRight: 8 }}
+          style={{ marginRight: 6 }}
         />
         <Text style={styles.callPillText}>{text}</Text>
       </TouchableOpacity>
+    </View>
+  );
+});
+
+interface SystemBubbleProps {
+  content: string;
+}
+
+const SystemBubble = memo(function SystemBubble({ content }: SystemBubbleProps) {
+  let iconName: keyof typeof Ionicons.glyphMap = 'information-circle-outline';
+  let iconColor = '#94A3B8';
+
+  const lower = content.toLowerCase();
+  if (lower.includes('oluşturdu')) {
+    iconName = 'people-outline';
+    iconColor = '#60A5FA';
+  } else if (lower.includes('ekledi')) {
+    iconName = 'person-add-outline';
+    iconColor = '#60A5FA';
+  } else if (lower.includes('ayrıldı') || lower.includes('çıkarıldı')) {
+    iconName = 'person-remove-outline';
+    iconColor = '#F87171';
+  } else if (lower.includes('sesli') || lower.includes('oturum')) {
+    iconName = 'mic-outline';
+    iconColor = '#38BDF8';
+  }
+
+  return (
+    <View style={styles.systemMessageCenterContainer}>
+      <View style={styles.systemBubblePill}>
+        <Ionicons name={iconName} size={15} color={iconColor} style={{ marginRight: 6 }} />
+        <Text style={styles.systemPillText}>{content}</Text>
+      </View>
     </View>
   );
 });
@@ -685,6 +684,7 @@ interface TextBubbleProps {
   item: Message;
   isMe: boolean;
   isDirect: boolean;
+  showSenderName: boolean;
   status: ChronoRingStatus;
   onLongPress: (item: Message) => void;
 }
@@ -693,11 +693,21 @@ const TextBubble = memo(function TextBubble({
   item,
   isMe,
   isDirect,
+  showSenderName,
   status,
   onLongPress,
 }: TextBubbleProps) {
   const isDeleted = !!item.deletedAt;
+  const contentText = isDeleted ? '🚫 Bu mesaj silindi' : item.content;
   const handleLongPress = useCallback(() => onLongPress(item), [onLongPress, item]);
+
+  // Tek satırda zaman + chrono ring ile yan yana sığabilir mi?
+  // "Bugün akşam müsait misin?" (25 karakter) gibi mesajlar screenshotta tek satırda.
+  const canBeInline =
+    !item.replyTo &&
+    !isDeleted &&
+    !item.content.includes('\n') &&
+    item.content.length <= 26;
 
   return (
     <TouchableOpacity
@@ -706,10 +716,10 @@ const TextBubble = memo(function TextBubble({
         isMe ? styles.myMessageContainer : styles.otherMessageContainer,
       ]}
       onLongPress={handleLongPress}
-      activeOpacity={0.85}
+      activeOpacity={0.88}
     >
       <View style={[styles.bubble, isMe ? styles.myBubble : styles.otherBubble]}>
-        {!isDirect && !isMe && (
+        {showSenderName && (
           <Text style={styles.senderName}>
             {item.sender?.displayName || item.sender?.username || 'Kullanıcı'}
           </Text>
@@ -726,19 +736,52 @@ const TextBubble = memo(function TextBubble({
           </View>
         )}
 
-        <Text style={[styles.messageContent, isDeleted && styles.deletedMessageText]}>
-          {isDeleted ? '🚫 Bu mesaj silindi' : item.content}
-        </Text>
-
-        <View style={styles.metaRow}>
-          {item.editedAt && !isDeleted && <Text style={styles.editedTag}>düzenlendi </Text>}
-          <Text style={[styles.timeText, isMe ? styles.myTimeText : styles.otherTimeText]}>
-            {formatTime(item.createdAt)}
-          </Text>
-          {isMe && !isDeleted && (
-            <ChronoProgressRing status={status} size={12} />
-          )}
-        </View>
+        {canBeInline ? (
+          <View style={styles.inlineBubbleRow}>
+            <Text
+              style={[
+                styles.messageContent,
+                isMe ? styles.myMessageContent : styles.otherMessageContent,
+              ]}
+            >
+              {contentText}
+            </Text>
+            <View style={styles.inlineMetaRow}>
+              {item.editedAt && <Text style={styles.editedTag}>düzenlendi </Text>}
+              <Text style={[styles.timeText, isMe ? styles.myTimeText : styles.otherTimeText]}>
+                {formatTime(item.createdAt)}
+              </Text>
+              {isMe && (
+                <View style={styles.ringWrapper}>
+                  <ChronoProgressRing status={status} size={12} />
+                </View>
+              )}
+            </View>
+          </View>
+        ) : (
+          <View style={styles.stackedBubbleCol}>
+            <Text
+              style={[
+                styles.messageContent,
+                isMe ? styles.myMessageContent : styles.otherMessageContent,
+                isDeleted && styles.deletedMessageText,
+              ]}
+            >
+              {contentText}
+            </Text>
+            <View style={styles.stackedMetaRow}>
+              {item.editedAt && !isDeleted && <Text style={styles.editedTag}>düzenlendi </Text>}
+              <Text style={[styles.timeText, isMe ? styles.myTimeText : styles.otherTimeText]}>
+                {formatTime(item.createdAt)}
+              </Text>
+              {isMe && !isDeleted && (
+                <View style={styles.ringWrapper}>
+                  <ChronoProgressRing status={status} size={12} />
+                </View>
+              )}
+            </View>
+          </View>
+        )}
       </View>
     </TouchableOpacity>
   );
@@ -772,12 +815,34 @@ const MessageFeed = memo(function MessageFeed({
     [currentUserId, currentUserName, currentUserAvatar],
   );
 
-  // React 19 Uyumlu Mesaj Renderlayıcı:
-  // GiftedChat'in dahili <Message {...props} /> içinde key yaymasını önler ve key'i doğrudan JSX elemanına aktarır.
   const renderMessage = useCallback((props: any) => {
     const { key, ...restProps } = props;
     const messageKey = key || props.currentMessage?._id || `msg-${Math.random()}`;
     return <GiftedChatMessage key={messageKey} {...restProps} />;
+  }, []);
+
+  const renderDay = useCallback((dayProps: any) => {
+    const currentMsg = dayProps.currentMessage;
+    const previousMsg = dayProps.previousMessage;
+    if (!currentMsg || !currentMsg.createdAt) return null;
+
+    if (
+      previousMsg &&
+      previousMsg.createdAt &&
+      isSameCalendarDay(currentMsg.createdAt, previousMsg.createdAt)
+    ) {
+      return null;
+    }
+
+    return (
+      <View style={styles.daySeparatorContainer}>
+        <View style={styles.daySeparatorPill}>
+          <Text style={styles.daySeparatorText}>
+            {formatChatDay(currentMsg.createdAt)}
+          </Text>
+        </View>
+      </View>
+    );
   }, []);
 
   const renderBubble = useCallback(
@@ -789,19 +854,22 @@ const MessageFeed = memo(function MessageFeed({
       const isMe = item.senderId === currentUserId;
 
       if (item.type === 'SYSTEM') {
-        const isVoiceEnd = item.content.includes('Sesli sohbet sona erdi');
-        return (
-          <View style={[styles.systemMessageContainer, isVoiceEnd && styles.systemVoiceEndContainer]}>
-            <Text style={[styles.systemMessageText, isVoiceEnd && styles.systemVoiceEndText]}>
-              {item.content}
-            </Text>
-          </View>
-        );
+        return <SystemBubble content={item.content} />;
       }
 
       if (item.type === 'CALL') {
         return <CallBubble item={item} isMe={isMe} isDirect={isDirect} onCallPress={onCallPress} />;
       }
+
+      const previousMsg = bubbleProps.previousMessage as (IMessage & { raw?: Message }) | undefined;
+      const isSameSenderAsPrev =
+        previousMsg &&
+        !previousMsg.system &&
+        previousMsg.raw?.type !== 'SYSTEM' &&
+        previousMsg.raw?.type !== 'CALL' &&
+        previousMsg.user?._id === item.senderId;
+
+      const showSenderName = !isDirect && !isMe && !isSameSenderAsPrev;
 
       const isPending = !!item.isPending;
       const isRead = Boolean(
@@ -815,6 +883,7 @@ const MessageFeed = memo(function MessageFeed({
           item={item}
           isMe={isMe}
           isDirect={isDirect}
+          showSenderName={showSenderName}
           status={ringStatus}
           onLongPress={onLongPressMessage}
         />
@@ -834,6 +903,8 @@ const MessageFeed = memo(function MessageFeed({
         renderLoading={renderFeedLoading}
         renderMessage={renderMessage}
         renderBubble={renderBubble}
+        renderDay={renderDay}
+        renderAvatar={() => null}
         renderChatEmpty={renderChatEmpty}
         renderInputToolbar={renderNoInputToolbar}
         minInputToolbarHeight={0}
@@ -848,12 +919,9 @@ const styles = StyleSheet.create({
   feedFade: {
     flex: 1,
   },
-  readCheckIcon: {
-    marginLeft: 4,
-  },
   container: {
     flex: 1,
-    backgroundColor: colors.background,
+    backgroundColor: '#080B14',
   },
   keyboardAvoidingRoot: {
     flex: 1,
@@ -863,9 +931,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 8,
     paddingVertical: 10,
-    backgroundColor: colors.surface,
+    backgroundColor: '#0B0F1A',
     borderBottomWidth: 1,
-    borderBottomColor: colors.border,
+    borderBottomColor: 'rgba(255, 255, 255, 0.05)',
   },
   backBtn: {
     padding: 8,
@@ -875,54 +943,21 @@ const styles = StyleSheet.create({
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    marginLeft: 4,
-  },
-  avatar: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: colors.surfaceElevated,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 10,
-    position: 'relative',
-    borderWidth: 1,
-    borderColor: colors.borderLight,
-  },
-  avatarImage: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    marginRight: 10,
-  },
-  avatarText: {
-    color: colors.primaryLight,
-    fontSize: 16,
-    fontWeight: '700',
-  },
-  headerVoiceDot: {
-    position: 'absolute',
-    bottom: 0,
-    right: 0,
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-    backgroundColor: colors.online,
-    borderWidth: 1.5,
-    borderColor: colors.surface,
+    marginLeft: 2,
   },
   headerTitles: {
     flex: 1,
   },
   roomName: {
-    color: colors.textPrimary,
+    color: '#FFFFFF',
     fontSize: 16,
     fontWeight: '700',
   },
   roomStatus: {
-    color: colors.textSecondary,
+    color: '#94A3B8',
     fontSize: 12,
     fontWeight: '500',
+    marginTop: 1,
   },
   headerActions: {
     flexDirection: 'row',
@@ -936,53 +971,22 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  actionIconBtnActive: {
-    backgroundColor: 'rgba(56, 189, 248, 0.15)',
-  },
-  liveVoiceBanner: {
+  headerVoicePillBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: colors.surfaceElevated,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
+    backgroundColor: '#2563EB',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 18,
+    marginRight: 2,
   },
-  voiceBannerContent: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    flex: 1,
+  headerVoicePillActive: {
+    backgroundColor: '#10B981',
   },
-  voiceWaveIconBg: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: colors.primary,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  voiceBannerTitle: {
-    color: colors.textPrimary,
+  headerVoicePillText: {
+    color: '#FFFFFF',
     fontSize: 13,
     fontWeight: '700',
-  },
-  voiceBannerSubtitle: {
-    color: colors.primaryLight,
-    fontSize: 11,
-  },
-  joinBtnPill: {
-    backgroundColor: colors.primary,
-    paddingHorizontal: 14,
-    paddingVertical: 6,
-    borderRadius: 14,
-  },
-  joinBtnText: {
-    color: '#ffffff',
-    fontSize: 12,
-    fontWeight: '800',
-    letterSpacing: 0.5,
   },
   chatArea: {
     flex: 1,
@@ -993,10 +997,10 @@ const styles = StyleSheet.create({
   },
   messagesList: {
     paddingHorizontal: 12,
-    paddingVertical: 12,
+    paddingVertical: 8,
   },
   messageBubbleContainer: {
-    marginVertical: 4,
+    marginVertical: 2,
     maxWidth: '82%',
   },
   myMessageContainer: {
@@ -1006,74 +1010,82 @@ const styles = StyleSheet.create({
     alignSelf: 'flex-start',
   },
   bubble: {
-    paddingHorizontal: 14,
-    paddingTop: 8,
-    paddingBottom: 6,
-    shadowColor: '#000',
+    paddingHorizontal: 12,
+    paddingTop: 7,
+    paddingBottom: 7,
+    shadowColor: '#000000',
     shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.15,
-    shadowRadius: 2,
+    shadowOpacity: 0.12,
+    shadowRadius: 1.5,
     elevation: 1,
   },
   myBubble: {
-    backgroundColor: colors.bubbleSent,
+    backgroundColor: '#2563EB',
     borderTopLeftRadius: 18,
     borderTopRightRadius: 18,
     borderBottomLeftRadius: 18,
     borderBottomRightRadius: 4,
   },
   otherBubble: {
-    backgroundColor: colors.bubbleReceived,
+    backgroundColor: '#131B2E',
     borderTopLeftRadius: 18,
     borderTopRightRadius: 18,
     borderBottomLeftRadius: 4,
     borderBottomRightRadius: 18,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: 'rgba(255, 255, 255, 0.05)',
   },
   senderName: {
-    color: colors.primaryLight,
-    fontSize: 12,
+    color: '#38BDF8',
+    fontSize: 13,
     fontWeight: '700',
     marginBottom: 3,
   },
-  replyPreviewInBubble: {
-    borderLeftWidth: 3,
-    borderLeftColor: colors.primaryLight,
-    paddingLeft: 8,
-    marginBottom: 6,
-    backgroundColor: 'rgba(0,0,0,0.15)',
-    borderRadius: 4,
-    paddingVertical: 2,
+  inlineBubbleRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    justifyContent: 'space-between',
+    gap: 8,
   },
-  replySenderInBubble: {
-    fontSize: 11,
-    color: colors.primaryLight,
-    fontWeight: '700',
+  stackedBubbleCol: {
+    flexDirection: 'column',
   },
-  replyTextInBubble: {
-    fontSize: 12,
-    color: colors.textSecondary,
+  inlineMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginBottom: 1,
   },
-  messageContent: {
-    color: colors.textPrimary,
-    fontSize: 15,
-    lineHeight: 20,
-  },
-  deletedMessageText: {
-    fontStyle: 'italic',
-    color: colors.textSecondary,
-  },
-  metaRow: {
+  stackedMetaRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'flex-end',
     marginTop: 3,
     alignSelf: 'flex-end',
+    gap: 4,
+  },
+  ringWrapper: {
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  messageContent: {
+    fontSize: 15,
+    lineHeight: 20,
+    letterSpacing: 0.1,
+  },
+  myMessageContent: {
+    color: '#FFFFFF',
+  },
+  otherMessageContent: {
+    color: '#F1F5F9',
+  },
+  deletedMessageText: {
+    fontStyle: 'italic',
+    color: '#94A3B8',
   },
   editedTag: {
     fontSize: 10,
-    color: colors.textSecondary,
+    color: '#94A3B8',
     fontStyle: 'italic',
   },
   timeText: {
@@ -1081,36 +1093,84 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
   myTimeText: {
-    color: colors.bubbleSentTime,
+    color: 'rgba(255, 255, 255, 0.72)',
   },
   otherTimeText: {
-    color: colors.bubbleTime,
+    color: '#94A3B8',
   },
-  systemMessageContainer: {
-    alignSelf: 'center',
-    backgroundColor: 'rgba(21, 29, 48, 0.75)',
-    paddingHorizontal: 14,
-    paddingVertical: 5,
-    borderRadius: 12,
-    marginVertical: 6,
+  replyPreviewInBubble: {
+    borderLeftWidth: 3,
+    borderLeftColor: '#38BDF8',
+    paddingLeft: 8,
+    marginBottom: 6,
+    backgroundColor: 'rgba(0, 0, 0, 0.18)',
+    borderRadius: 4,
+    paddingVertical: 3,
   },
-  systemMessageText: {
-    color: colors.textSecondary,
+  replySenderInBubble: {
+    fontSize: 11,
+    color: '#38BDF8',
+    fontWeight: '700',
+  },
+  replyTextInBubble: {
     fontSize: 12,
+    color: '#CBD5E1',
   },
-  systemVoiceEndContainer: {
-    backgroundColor: '#0B291B',
-    borderColor: '#10B98155',
+  daySeparatorContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginVertical: 10,
+  },
+  daySeparatorPill: {
+    backgroundColor: 'rgba(16, 24, 39, 0.78)',
+    paddingHorizontal: 13,
+    paddingVertical: 4.5,
+    borderRadius: 13,
     borderWidth: 1,
-    paddingHorizontal: 16,
-    paddingVertical: 7,
-    borderRadius: 16,
-    marginVertical: 8,
+    borderColor: 'rgba(255, 255, 255, 0.05)',
   },
-  systemVoiceEndText: {
-    color: '#34D399',
-    fontSize: 12.5,
+  daySeparatorText: {
+    color: '#94A3B8',
+    fontSize: 12,
     fontWeight: '600',
+  },
+  systemMessageCenterContainer: {
+    alignSelf: 'center',
+    marginVertical: 4,
+  },
+  systemBubblePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(16, 24, 39, 0.78)',
+    paddingHorizontal: 12,
+    paddingVertical: 5.5,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.05)',
+  },
+  systemPillText: {
+    color: '#CBD5E1',
+    fontSize: 12,
+    fontWeight: '500',
+  },
+  callMessageCenterContainer: {
+    alignSelf: 'center',
+    marginVertical: 4,
+  },
+  callBubblePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(16, 24, 39, 0.78)',
+    paddingHorizontal: 12,
+    paddingVertical: 5.5,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.05)',
+  },
+  callPillText: {
+    color: '#CBD5E1',
+    fontSize: 12,
+    fontWeight: '500',
   },
   emptyFeed: {
     alignItems: 'center',
@@ -1130,13 +1190,13 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(56, 189, 248, 0.25)',
   },
   emptyFeedTitle: {
-    color: colors.textPrimary,
+    color: '#FFFFFF',
     fontSize: 18,
     fontWeight: '700',
     marginBottom: 6,
   },
   emptyFeedText: {
-    color: colors.textSecondary,
+    color: '#94A3B8',
     fontSize: 14,
     textAlign: 'center',
     maxWidth: 240,
@@ -1144,51 +1204,44 @@ const styles = StyleSheet.create({
   actionBanner: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#1E293B',
+    backgroundColor: '#131B2E',
     paddingHorizontal: 14,
     paddingVertical: 8,
     borderTopWidth: 1,
-    borderTopColor: colors.border,
+    borderTopColor: 'rgba(255, 255, 255, 0.06)',
   },
   actionBannerTitle: {
     fontSize: 12,
     fontWeight: '700',
-    color: colors.primaryLight,
+    color: '#38BDF8',
   },
   actionBannerText: {
     fontSize: 13,
-    color: colors.textSecondary,
+    color: '#94A3B8',
   },
   inputContainer: {
     flexDirection: 'row',
     alignItems: 'flex-end',
-    paddingHorizontal: 8,
+    paddingHorizontal: 10,
     paddingTop: 8,
     backgroundColor: '#0B0F1A',
     borderTopWidth: 1,
-    borderTopColor: 'rgba(255, 255, 255, 0.06)',
+    borderTopColor: 'rgba(255, 255, 255, 0.05)',
     gap: 8,
-  },
-  mediaIconBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    justifyContent: 'center',
-    alignItems: 'center',
   },
   inputBox: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#111827',
-    borderRadius: 22,
-    paddingHorizontal: 12,
-    minHeight: 44,
+    backgroundColor: '#131B2E',
+    borderRadius: 24,
+    paddingHorizontal: 8,
+    minHeight: 46,
     maxHeight: 120,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.08)',
+    borderColor: 'rgba(255, 255, 255, 0.06)',
   },
-  attachBtn: {
+  inputInnerBtn: {
     padding: 6,
     justifyContent: 'center',
     alignItems: 'center',
@@ -1197,52 +1250,16 @@ const styles = StyleSheet.create({
     flex: 1,
     color: '#FFFFFF',
     fontSize: 15,
-    paddingHorizontal: 4,
+    paddingHorizontal: 6,
     paddingVertical: 8,
   },
   actionSendBtn: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
+    width: 46,
+    height: 46,
+    borderRadius: 23,
     backgroundColor: '#2563EB',
     justifyContent: 'center',
     alignItems: 'center',
-  },
-  dockedVoiceCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: '#111827',
-    borderRadius: 20,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    marginHorizontal: 12,
-    marginBottom: 8,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.06)',
-  },
-  dockedVoiceTitle: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: '#FFFFFF',
-    marginBottom: 2,
-  },
-  dockedVoiceSubtitle: {
-    fontSize: 12,
-    color: '#8A93A8',
-  },
-  dockedVoiceBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#2563EB',
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 20,
-  },
-  dockedVoiceBtnText: {
-    color: '#FFFFFF',
-    fontSize: 13,
-    fontWeight: '700',
   },
   giftedLoaderContainer: {
     flex: 1,
@@ -1252,28 +1269,8 @@ const styles = StyleSheet.create({
   },
   giftedLoaderText: {
     marginTop: 12,
-    color: colors.textSecondary,
+    color: '#94A3B8',
     fontSize: 14,
-    fontWeight: '500',
-  },
-  callMessageCenterContainer: {
-    alignSelf: 'center',
-    marginVertical: 6,
-  },
-  callBubblePill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#111827',
-    paddingHorizontal: 14,
-    paddingVertical: 7,
-    borderRadius: 18,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.06)',
-    alignSelf: 'center',
-  },
-  callPillText: {
-    color: '#CBD5E1',
-    fontSize: 12,
     fontWeight: '500',
   },
   retryBtn: {
@@ -1283,7 +1280,7 @@ const styles = StyleSheet.create({
     marginTop: 16,
     paddingHorizontal: 20,
     paddingVertical: 10,
-    backgroundColor: colors.primary,
+    backgroundColor: '#2563EB',
     borderRadius: 20,
   },
   retryBtnText: {

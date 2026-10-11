@@ -48,9 +48,42 @@ export function formatListTimestamp(dateStr?: string | null): string {
       d.getMonth() === now.getMonth() &&
       d.getDate() === now.getDate()
     ) {
-      return formatTime(dateStr);
+      return timeFormatter ? timeFormatter.format(d) : `${pad(d.getHours())}:${pad(d.getMinutes())}`;
     }
-    return dateFormatter ? dateFormatter.format(d) : `${pad(d.getDate())}.${pad(d.getMonth() + 1)}`;
+    return dateFormatter ? dateFormatter.format(d) : `${d.getDate()}/${d.getMonth() + 1}`;
+  } catch {
+    return '';
+  }
+}
+
+export function formatChatDay(dateVal?: string | Date | number | null): string {
+  if (!dateVal) return '';
+  try {
+    const d = new Date(dateVal);
+    const now = new Date();
+    if (
+      d.getFullYear() === now.getFullYear() &&
+      d.getMonth() === now.getMonth() &&
+      d.getDate() === now.getDate()
+    ) {
+      return 'Bugün';
+    }
+
+    const yesterday = new Date(now);
+    yesterday.setDate(now.getDate() - 1);
+    if (
+      d.getFullYear() === yesterday.getFullYear() &&
+      d.getMonth() === yesterday.getMonth() &&
+      d.getDate() === yesterday.getDate()
+    ) {
+      return 'Dün';
+    }
+
+    const months = [
+      'Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran',
+      'Temmuz', 'Ağustos', 'Eylül', 'Ekim', 'Kasım', 'Aralık',
+    ];
+    return `${d.getDate()} ${months[d.getMonth()]}`;
   } catch {
     return '';
   }
