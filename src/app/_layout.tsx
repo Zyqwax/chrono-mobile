@@ -67,16 +67,38 @@ export default function RootLayout() {
     return () => clearTimeout(timer);
   }, []);
 
-  // Mesaj bildirimine tıklandığında ilgili odaya yönlendir
+  // 1. Uygulama arka plandayken veya açıkken bildirime tıklandığında doğrudan odaya yönlendir
   useEffect(() => {
     const sub = Notifications.addNotificationResponseReceivedListener((response) => {
       const data = response.notification.request.content.data;
-      if (data?.type === 'message' && data?.roomId) {
-        router.push({ pathname: '/chat/[id]', params: { id: data.roomId as string } });
+      const roomId = data?.roomId;
+      if (roomId) {
+        router.push({ pathname: '/chat/[id]', params: { id: roomId as string } });
       }
     });
     return () => sub.remove();
   }, [router]);
+
+  // 2. Uygulama tamamen kapalıyken (Killed State) bildirime tıklanarak başlatıldıysa hedef odaya deep link sağla
+  useEffect(() => {
+    if (isAuthLoading || !isAuthenticated) return;
+
+    let isMounted = true;
+    Notifications.getLastNotificationResponseAsync()
+      .then((response) => {
+        if (!isMounted || !response) return;
+        const data = response.notification.request.content.data;
+        const roomId = data?.roomId;
+        if (roomId) {
+          router.push({ pathname: '/chat/[id]', params: { id: roomId as string } });
+        }
+      })
+      .catch(console.warn);
+
+    return () => {
+      isMounted = false;
+    };
+  }, [isAuthLoading, isAuthenticated, router]);
 
   // Oturum durumuna göre rotaları yönet
   useEffect(() => {

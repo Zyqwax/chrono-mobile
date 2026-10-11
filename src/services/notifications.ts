@@ -1,13 +1,30 @@
+import * as Device from 'expo-device';
+import Constants from 'expo-constants';
 import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
 import { foregroundServiceManager } from './foregroundService';
+import { useChatStore } from '../store/useChatStore';
 
-// Uygulama açıkken bildirimlerin görünüm davranışı
+// Uygulama açıkken bildirimlerin görünüm davranışı (Foreground Filtering / Çift Bildirim Engelleyici)
 Notifications.setNotificationHandler({
   handleNotification: async (notification) => {
     const data = notification.request.content.data;
     const isSilent = Boolean(data?.isSilent || data?.type === 'active_call');
+
+    // Aktif oda kontrolü: Eğer kullanıcı o an bildirimin geldiği odayı açık tutuyorsa bildirimi ve sesi bastır!
+    const activeRoomId = useChatStore?.getState?.()?.activeRoom?.id;
+    if (data?.roomId && activeRoomId === data.roomId) {
+      return {
+        shouldShowAlert: false,
+        shouldShowBanner: false,
+        shouldShowList: false,
+        shouldPlaySound: false,
+        shouldSetBadge: false,
+      };
+    }
+
     return {
+      shouldShowAlert: !isSilent,
       shouldShowBanner: !isSilent,
       shouldShowList: true,
       shouldPlaySound: !isSilent,
@@ -15,6 +32,55 @@ Notifications.setNotificationHandler({
     };
   },
 });
+
+/**
+ * Fiziksel cihaz kontrolü, Android MAX önem kanalı ve EAS projectId ile Expo Push Token alır.
+ */
+export async function registerForPushNotificationsAsync(): Promise<string | null> {
+  if (!Device.isDevice) {
+    console.log('📱 Push Notifications: Fiziksel cihaz gereklidir (Emülatörde simüle edilemez).');
+    return null;
+  }
+
+  if (Platform.OS === 'android') {
+    await Notifications.setNotificationChannelAsync('chat-messages', {
+      name: 'Sohbet Mesajları',
+      importance: Notifications.AndroidImportance.MAX,
+      vibrationPattern: [0, 250, 250, 250],
+      lightColor: '#38BDF8',
+      enableVibrate: true,
+      showBadge: true,
+    });
+  }
+
+  const { status: existingStatus } = await Notifications.getPermissionsAsync();
+  let finalStatus = existingStatus;
+  if (existingStatus !== 'granted') {
+    const { status } = await Notifications.requestPermissionsAsync();
+    finalStatus = status;
+  }
+
+  if (finalStatus !== 'granted') {
+    console.warn('⚠️ Push bildirim izni verilmedi.');
+    return null;
+  }
+
+  const projectId =
+    Constants?.expoConfig?.extra?.eas?.projectId ??
+    Constants?.easConfig?.projectId ??
+    '293cda25-728d-4ab4-b77f-df2db668e2f1';
+
+  try {
+    const tokenData = await Notifications.getExpoPushTokenAsync({
+      projectId,
+    });
+    console.log('📲 Expo Push Token başarıyla alındı:', tokenData.data);
+    return tokenData.data;
+  } catch (error) {
+    console.warn('Expo push token alınırken hata:', error);
+    return null;
+  }
+}
 
 class NotificationService {
   private isConfigured = false;
@@ -43,10 +109,10 @@ class NotificationService {
           // yut
         }
 
-        // 1. Sohbet Mesaj Bildirim Kanalı (Öncelikli & Titreşimli)
+        // 1. Sohbet Mesaj Bildirim Kanalı (En yüksek öncelik MAX & Titreşimli)
         await Notifications.setNotificationChannelAsync('chat-messages', {
           name: 'Sohbet Mesajları',
-          importance: Notifications.AndroidImportance.HIGH,
+          importance: Notifications.AndroidImportance.MAX,
           vibrationPattern: [0, 250, 250, 250],
           lightColor: '#38BDF8',
           enableVibrate: true,

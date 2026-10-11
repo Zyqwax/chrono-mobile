@@ -12,7 +12,10 @@ import {
 } from '../types';
 import { connectSocket, disconnectSocket, getSocket } from '../services/socket';
 import { api, setAuthToken, API_BASE_URL } from '../services/api';
-import { notificationService } from '../services/notifications';
+import {
+  notificationService,
+  registerForPushNotificationsAsync,
+} from '../services/notifications';
 import { liveKitService } from '../services/livekit';
 
 const STORAGE_TOKEN_KEY = '@chrono_auth_token';
@@ -141,6 +144,15 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     }
 
     if (token) {
+      // Cihazın Expo Push Token'ını al ve sunucudaki profile kaydet
+      registerForPushNotificationsAsync()
+        .then((pushToken) => {
+          if (pushToken) {
+            api.put('/users/me/push-token', { pushToken }).catch(() => {});
+          }
+        })
+        .catch(console.warn);
+
       const socket = connectSocket(token);
 
       // 1. Yeni mesaj geldiğinde
@@ -544,6 +556,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   },
 
   logout: () => {
+    api.put('/users/me/push-token', { pushToken: null }).catch(() => {});
     disconnectSocket();
     setAuthToken(null);
     AsyncStorage.removeItem(STORAGE_TOKEN_KEY).catch(console.error);
