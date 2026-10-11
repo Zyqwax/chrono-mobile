@@ -19,6 +19,7 @@ import { Room } from '../types';
 import { useChatStore } from '../store/useChatStore';
 import { AddMemberModal } from './AddMemberModal';
 import { ChronoAvatar } from './ChronoAvatar';
+import { formatLastSeen } from '../utils/format';
 
 interface RoomInfoModalProps {
   visible: boolean;
@@ -43,6 +44,7 @@ export const RoomInfoModal: React.FC<RoomInfoModalProps> = ({
 
   const {
     currentUser,
+    settings,
     fetchRooms,
     deleteRoom,
     startCall,
@@ -291,9 +293,17 @@ export const RoomInfoModal: React.FC<RoomInfoModalProps> = ({
               <Text style={styles.profileUsername}>
                 @{room?.peer?.username || 'kullanici'}
               </Text>
-              <Text style={styles.onlineStatus}>
-                {room?.peer?.status === 'ONLINE' ? 'çevrimiçi' : 'son görülme yakınlarda'}
-              </Text>
+              {(() => {
+                const myOnlineVisible = (settings?.lastSeenVisibility ?? 'EVERYONE') !== 'NOBODY';
+                const peerStatus = myOnlineVisible ? room?.peer?.status : 'HIDDEN';
+                const peerLastSeen = myOnlineVisible ? room?.peer?.lastSeenAt : null;
+                const peerStatusInfo = formatLastSeen(peerStatus, peerLastSeen);
+                return (
+                  <Text style={[styles.onlineStatus, peerStatusInfo.isOnline && { color: '#10B981' }]}>
+                    {peerStatusInfo.text}
+                  </Text>
+                );
+              })()}
 
               {/* 3 Quick Action Buttons */}
               <View style={styles.actionPillsRow}>

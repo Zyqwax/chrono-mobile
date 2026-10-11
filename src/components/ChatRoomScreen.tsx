@@ -29,7 +29,13 @@ import { useShallow } from 'zustand/react/shallow';
 
 const CHAT_BACKGROUND = require('../../assets/chrono-chat-background.png');
 const EMPTY_MESSAGES: Message[] = [];
-import { formatTime, formatChatDay } from '../utils/format';
+import {
+  formatTime,
+  formatChatDay,
+  formatCallDuration,
+  formatLastSeen,
+  getTranslation,
+} from '../utils/format';
 
 const isSameCalendarDay = (
   d1?: Date | string | number | null,
@@ -155,7 +161,12 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({ room, onBack }) 
     ? room.peer?.displayName || room.peer?.username || 'Kullanıcı'
     : room.name || 'Sohbet Odası';
 
-  const isPeerOnline = isDirect && room.peer?.status === 'ONLINE';
+  const settings = useChatStore((s) => s.settings);
+  const myOnlineVisible = (settings?.lastSeenVisibility ?? 'EVERYONE') !== 'NOBODY';
+  const isPeerOnline = isDirect && myOnlineVisible && room.peer?.status === 'ONLINE';
+
+  const myReadReceipts = settings?.readReceipts ?? true;
+  const canShowReadReceipt = !isDirect || myReadReceipts;
 
   const loadChat = useCallback(
     async (isRetry = false) => {
@@ -313,6 +324,7 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({ room, onBack }) 
       const isSystem = item.type === 'SYSTEM';
       const isPending = !!item.isPending;
       const isRead = Boolean(
+        canShowReadReceipt &&
         currentOthersReadAt &&
         new Date(currentOthersReadAt).getTime() >= new Date(item.createdAt).getTime(),
       );
@@ -331,7 +343,7 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({ room, onBack }) 
         raw: item,
       } as IMessage & { raw: Message };
     });
-  }, [messages, currentOthersReadAt]);
+  }, [messages, currentOthersReadAt, canShowReadReceipt]);
 
   return (
     <SafeAreaView style={styles.container} edges={['top', 'left', 'right', "bottom"]}>
@@ -372,16 +384,18 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({ room, onBack }) 
               <Text style={styles.roomStatus} numberOfLines={1}>
                 {typingUsers.length > 0 ? (
                   <Text style={{ color: '#38BDF8' }}>
-                    {typingUsers.map((u) => u.displayName).join(', ')} yazıyor...
+                    {typingUsers.map((u) => u.displayName).join(', ')} {getTranslation('typing', 'yazıyor...')}
                   </Text>
                 ) : isDirect ? (
                   isPeerOnline ? (
-                    <Text style={{ color: '#10B981' }}>çevrimiçi</Text>
+                    <Text style={{ color: '#10B981' }}>{getTranslation('online', 'çevrimiçi')}</Text>
                   ) : (
-                    <Text style={{ color: '#6EE7B7' }}>son görülme yakınlarda</Text>
+                    <Text style={{ color: '#6EE7B7' }}>
+                      {formatLastSeen(room.peer?.status, room.peer?.lastSeenAt).text}
+                    </Text>
                   )
                 ) : (
-                  `${room.membersCount || room.members?.length || 2} üye · ${activeVoiceCount > 0 ? `${activeVoiceCount} çevrimiçi` : '1 çevrimiçi'}`
+                  `${room.membersCount || room.members?.length || 2} ${getTranslation('member', 'üye')} · ${activeVoiceCount > 0 ? `${activeVoiceCount} ${getTranslation('online', 'çevrimiçi')}` : `1 ${getTranslation('online', 'çevrimiçi')}`}`
                 )}
               </Text>
             </View>
@@ -468,6 +482,7 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({ room, onBack }) 
               currentUserName={currentUserName || 'Kullanıcı'}
               currentUserAvatar={currentUserAvatar || undefined}
               isDirect={isDirect}
+              canShowReadReceipt={canShowReadReceipt}
               othersReadAt={currentOthersReadAt}
               loading={loading}
               onLongPressMessage={handleMessageLongPress}
@@ -566,16 +581,6 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({ room, onBack }) 
 // ---------------------------------------------------------------------------
 // Mesaj beslemesi (memo): input'a yazarken veya klavye açılırken yeniden render olmaz
 // ---------------------------------------------------------------------------
-const formatCallDuration = (secs: number) => {
-  if (secs <= 0) return '';
-  const mins = Math.floor(secs / 60);
-  const remainingSecs = secs % 60;
-  if (mins > 0) {
-    return `${mins} dk ${remainingSecs > 0 ? `${remainingSecs} sn` : ''}`;
-  }
-  return `${remainingSecs} sn`;
-};
-
 const renderFeedLoading = () => null;
 
 const renderChatEmpty = () => (
@@ -623,8 +628,8 @@ const CallBubble = memo(function CallBubble({ item, isMe, isDirect, onCallPress 
   const timeStr = formatTime(item.createdAt);
 
   const label = isIncoming
-    ? (video ? 'Gelen görüntülü arama' : 'Gelen sesli arama')
-    : (video ? 'Giden görüntülü arama' : 'Giden sesli arama');
+    ? (video ? getTranslation('incomingVideo', 'Gelen görüntülü arama') : getTranslation('incomingAudio', 'Gelen sesli arama'))
+    : (video ? getTranslation('outgoingVideo', 'Giden görüntülü arama') : getTranslation('outgoingAudio', 'Giden sesli arama'));
 
   const text = durStr ? `${label} · ${durStr} · ${timeStr}` : `${label} · ${timeStr}`;
 
@@ -793,6 +798,7 @@ interface MessageFeedProps {
   currentUserName: string;
   currentUserAvatar?: string;
   isDirect: boolean;
+  canShowReadReceipt: boolean;
   othersReadAt?: string | null;
   loading: boolean;
   onLongPressMessage: (item: Message) => void;
@@ -805,6 +811,7 @@ const MessageFeed = memo(function MessageFeed({
   currentUserName,
   currentUserAvatar,
   isDirect,
+  canShowReadReceipt,
   othersReadAt,
   loading,
   onLongPressMessage,
@@ -873,6 +880,7 @@ const MessageFeed = memo(function MessageFeed({
 
       const isPending = !!item.isPending;
       const isRead = Boolean(
+        canShowReadReceipt &&
         othersReadAt &&
         new Date(othersReadAt).getTime() >= new Date(item.createdAt).getTime(),
       );
@@ -889,7 +897,7 @@ const MessageFeed = memo(function MessageFeed({
         />
       );
     },
-    [currentUserId, isDirect, othersReadAt, onLongPressMessage, onCallPress],
+    [currentUserId, isDirect, canShowReadReceipt, othersReadAt, onLongPressMessage, onCallPress],
   );
 
   return (

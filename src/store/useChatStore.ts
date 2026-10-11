@@ -302,14 +302,24 @@ export const useChatStore = create<ChatStore>((set, get) => ({
 
       // Karşı tarafın okuduğu bilgisi (Halka 360° dolumu)
       socket.on('messages_read', ({ roomId, readAt }: { roomId: string; readAt: string }) => {
-        set((state) => ({
-          rooms: state.rooms.map((r) =>
+        const state = get();
+        const targetRoom = state.rooms.find((r) => r.id === roomId);
+        const isDirect = targetRoom ? targetRoom.type === 'DIRECT' : state.activeRoom?.type === 'DIRECT';
+        const myReadReceipts = state.settings?.readReceipts ?? true;
+
+        // DM'de okundu bilgisini kapatan kişi ne karşıya gönderir ne de karşıdan alır
+        if (isDirect && !myReadReceipts) {
+          return;
+        }
+
+        set((s) => ({
+          rooms: s.rooms.map((r) =>
             r.id === roomId ? { ...r, othersReadAt: readAt } : r,
           ),
           activeRoom:
-            state.activeRoom?.id === roomId
-              ? { ...state.activeRoom, othersReadAt: readAt }
-              : state.activeRoom,
+            s.activeRoom?.id === roomId
+              ? { ...s.activeRoom, othersReadAt: readAt }
+              : s.activeRoom,
         }));
       });
 
@@ -340,21 +350,68 @@ export const useChatStore = create<ChatStore>((set, get) => ({
 
       // 7. Kullanıcı çevrimiçi / çevrimdışı durumu
       socket.on('user_status_changed', (data: { userId: string; status: any; lastSeenAt: string | null }) => {
-        set((state) => ({
-          rooms: state.rooms.map((r) => {
+        const state = get();
+        const myLastSeenVisibility = state.settings?.lastSeenVisibility ?? 'EVERYONE';
+        const isSelf = state.currentUser?.id === data.userId;
+        const effectiveStatus = !isSelf && myLastSeenVisibility === 'NOBODY' ? 'HIDDEN' : data.status;
+        const effectiveLastSeenAt = !isSelf && myLastSeenVisibility === 'NOBODY' ? null : data.lastSeenAt;
+
+        set((s) => ({
+          rooms: s.rooms.map((r) => {
             if (r.peer && r.peer.id === data.userId) {
               return {
                 ...r,
-                peer: { ...r.peer, status: data.status, lastSeenAt: data.lastSeenAt },
+                peer: { ...r.peer, status: effectiveStatus, lastSeenAt: effectiveLastSeenAt },
               };
             }
             return r;
           }),
-          contacts: state.contacts.map((c) => {
+          contacts: s.contacts.map((c) => {
             if (c.user.id === data.userId) {
               return {
                 ...c,
-                user: { ...c.user, status: data.status, lastSeenAt: data.lastSeenAt },
+                user: { ...c.user, status: effectiveStatus, lastSeenAt: effectiveLastSeenAt },
+              };
+            }
+            return c;
+          }),
+        }));
+      });
+
+      // 7.1 Profil / gizlilik güncellemesi
+      socket.on('user_updated', (data: Partial<User> & { id: string }) => {
+        if (!data?.id) return;
+        const state = get();
+        const myLastSeenVisibility = state.settings?.lastSeenVisibility ?? 'EVERYONE';
+        const isSelf = state.currentUser?.id === data.id;
+        const effectiveStatus = !isSelf && myLastSeenVisibility === 'NOBODY' ? 'HIDDEN' : data.status;
+        const effectiveLastSeenAt = !isSelf && myLastSeenVisibility === 'NOBODY' ? null : data.lastSeenAt;
+
+        set((s) => ({
+          rooms: s.rooms.map((r) => {
+            if (r.peer && r.peer.id === data.id) {
+              return {
+                ...r,
+                peer: {
+                  ...r.peer,
+                  ...data,
+                  status: effectiveStatus !== undefined ? effectiveStatus : r.peer.status,
+                  lastSeenAt: effectiveLastSeenAt !== undefined ? effectiveLastSeenAt : r.peer.lastSeenAt,
+                },
+              };
+            }
+            return r;
+          }),
+          contacts: s.contacts.map((c) => {
+            if (c.user.id === data.id) {
+              return {
+                ...c,
+                user: {
+                  ...c.user,
+                  ...data,
+                  status: effectiveStatus !== undefined ? effectiveStatus : c.user.status,
+                  lastSeenAt: effectiveLastSeenAt !== undefined ? effectiveLastSeenAt : c.user.lastSeenAt,
+                },
               };
             }
             return c;
@@ -581,7 +638,39 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   updateSettings: async (data) => {
     try {
       const res = await api.patch('/users/me/settings', data);
-      set({ settings: res.data });
+      const newSettings = res.data;
+      set((state) => {
+        let rooms = state.rooms;
+        let contacts = state.contacts;
+
+        // Çevrimiçi durumunu gizlediyse (NOBODY), mütekabiliyet gereği başkalarını da göremez
+        if (newSettings.lastSeenVisibility === 'NOBODY') {
+          rooms = rooms.map((r) =>
+            r.peer ? { ...r, peer: { ...r.peer, status: 'HIDDEN', lastSeenAt: null } } : r,
+          );
+          contacts = contacts.map((c) => ({
+            ...c,
+            user: { ...c.user, status: 'HIDDEN', lastSeenAt: null },
+          }));
+        }
+
+        // DM okundu bilgisini kapattıysa, DM odalarındaki othersReadAt bilgisini temizle
+        if (newSettings.readReceipts === false) {
+          rooms = rooms.map((r) =>
+            r.type === 'DIRECT' ? { ...r, othersReadAt: null } : r,
+          );
+        }
+
+        return {
+          settings: newSettings,
+          rooms,
+          contacts,
+          activeRoom:
+            state.activeRoom && newSettings.readReceipts === false && state.activeRoom.type === 'DIRECT'
+              ? { ...state.activeRoom, othersReadAt: null }
+              : state.activeRoom,
+        };
+      });
     } catch (err) {
       console.error('updateSettings error:', err);
     }

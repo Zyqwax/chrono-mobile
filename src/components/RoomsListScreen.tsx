@@ -24,7 +24,7 @@ import { ChronoProgressRing } from './ChronoProgressRing';
 import { chronoTheme } from '../theme/colors';
 import { api } from '../services/api';
 import { useShallow } from 'zustand/react/shallow';
-import { formatListTimestamp } from '../utils/format';
+import { formatCallPreview, formatListTimestamp, getTranslation } from '../utils/format';
 
 const { colors } = chronoTheme;
 const CHRONO_APP_ICON = require('../../assets/android-icon-foreground.png');
@@ -84,9 +84,11 @@ export const RoomsListScreen: React.FC<RoomsListScreenProps> = ({
     activeCall,
     acceptCall,
     declineCall,
+    settings,
   } = useChatStore(
     useShallow((s) => ({
       currentUserId: s.currentUser?.id,
+      settings: s.settings,
       rooms: s.rooms,
       fetchRooms: s.fetchRooms,
       openDirect: s.openDirect,
@@ -170,13 +172,23 @@ export const RoomsListScreen: React.FC<RoomsListScreenProps> = ({
       <RoomItem
         item={item}
         currentUserId={currentUserId}
+        myLastSeenVisibility={settings?.lastSeenVisibility}
+        myReadReceipts={settings?.readReceipts}
         voiceCount={item.type !== 'DIRECT' ? roomVoiceStates?.[item.id]?.count || 0 : 0}
         isMyVoiceRoom={activeVoiceRoomId === item.id}
         onPress={onSelectRoom}
         onLongPress={handleLongPressRoom}
       />
     ),
-    [currentUserId, roomVoiceStates, activeVoiceRoomId, onSelectRoom, handleLongPressRoom],
+    [
+      currentUserId,
+      settings?.lastSeenVisibility,
+      settings?.readReceipts,
+      roomVoiceStates,
+      activeVoiceRoomId,
+      onSelectRoom,
+      handleLongPressRoom,
+    ],
   );
 
   // Sekme ve arama filtrelemesi
@@ -654,25 +666,11 @@ const getRoomItemLayout = (_: ArrayLike<Room> | null | undefined, index: number)
   index,
 });
 
-const getCallPreviewText = (content?: string, isMe?: boolean) => {
-  if (!content) return '📞 Arama kaydı';
-  try {
-    const data = JSON.parse(content);
-    const isMissed = !isMe && (data.status === 'missed' || data.status === 'declined' || data.status === 'busy');
-    if (data.video) {
-      if (isMissed) return '📹 Cevapsız görüntülü arama';
-      return isMe ? '📹 Giden görüntülü arama' : '📹 Gelen görüntülü arama';
-    }
-    if (isMissed) return '📞 Cevapsız arama';
-    return isMe ? '📞 Giden sesli arama' : '📞 Gelen sesli arama';
-  } catch {
-    return '📞 Arama kaydı';
-  }
-};
-
 interface RoomItemProps {
   item: Room;
   currentUserId?: string;
+  myLastSeenVisibility?: string;
+  myReadReceipts?: boolean;
   voiceCount: number;
   isMyVoiceRoom: boolean;
   onPress: (room: Room) => void;
@@ -682,6 +680,8 @@ interface RoomItemProps {
 const RoomItem = memo(function RoomItem({
   item,
   currentUserId,
+  myLastSeenVisibility,
+  myReadReceipts,
   voiceCount,
   isMyVoiceRoom,
   onPress,
@@ -697,7 +697,18 @@ const RoomItem = memo(function RoomItem({
     ? item.peer?.displayName || item.peer?.username || 'Kullanıcı'
     : item.name || 'Sohbet Odası';
 
-  const isPeerOnline = isDirect && item.peer?.status === 'ONLINE';
+  // Çevrimiçi gizliliği: ben kapattıysam başkalarının çevrimiçi durumunu göremem (reciprocal)
+  const canSeeOnline = myLastSeenVisibility !== 'NOBODY';
+  const isPeerOnline = isDirect && canSeeOnline && item.peer?.status === 'ONLINE';
+
+  // Okundu bilgisi: oda sohbetlerinde her zaman aktiftir.
+  // Direkt (DM) sohbetlerde kullanıcı okundu bilgisini kapattıysa karşı tarafın okundu bilgisini de alamaz.
+  const canShowReadReceipt = !isDirect || myReadReceipts !== false;
+  const isRead =
+    canShowReadReceipt &&
+    !!item.othersReadAt &&
+    !!lastMsg?.createdAt &&
+    new Date(item.othersReadAt).getTime() >= new Date(lastMsg.createdAt).getTime();
 
   const handlePress = useCallback(() => onPress(item), [onPress, item]);
   const handleLongPress = useCallback(() => onLongPress(item), [onLongPress, item]);
@@ -744,15 +755,8 @@ const RoomItem = memo(function RoomItem({
           <View style={styles.metaRight}>
             {isMine && (
               <ChronoProgressRing
-                status={
-                  item.othersReadAt &&
-                  item.lastMessage?.createdAt &&
-                  new Date(item.othersReadAt).getTime() >=
-                    new Date(item.lastMessage.createdAt).getTime()
-                    ? 'read'
-                    : 'sent'
-                }
-                size={11}
+                status={isRead ? 'read' : 'sent'}
+                size={10}
               />
             )}
             <Text style={styles.timestamp}>
@@ -766,8 +770,10 @@ const RoomItem = memo(function RoomItem({
             <View style={styles.voicePreviewRow}>
               <Ionicons name="mic" size={13} color="#10B981" style={styles.readIcon} />
               <Text style={styles.voicePreviewText} numberOfLines={1}>
-                <Text style={styles.voicePreviewHighlight}>{voiceCount} kişi sesli sohbette</Text>
-                {' • Hemen katıl'}
+                <Text style={styles.voicePreviewHighlight}>
+                  {voiceCount} {getTranslation('voiceChatPeople', 'kişi sesli sohbette')}
+                </Text>
+                {` • ${getTranslation('joinNow', 'Hemen katıl')}`}
               </Text>
             </View>
           ) : (
@@ -776,7 +782,7 @@ const RoomItem = memo(function RoomItem({
                 <Text style={styles.lastMessageSender}>{lastMsg.sender.displayName}: </Text>
               ) : null}
               {lastMsg?.type === 'CALL'
-                ? getCallPreviewText(lastMsg.content, isMine)
+                ? formatCallPreview(lastMsg.content, isMine)
                 : lastMsg?.content}
             </Text>
           )}
@@ -995,6 +1001,7 @@ const styles = StyleSheet.create({
   metaRight: {
     flexDirection: 'row',
     alignItems: 'center',
+    gap: 4,
   },
   timestamp: {
     color: colors.textSecondary,
