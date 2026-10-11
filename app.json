@@ -27,6 +27,7 @@
     },
     "android": {
       "package": "com.zyqwax.chrono",
+      "googleServicesFile": "./google-services.json",
       "versionCode": 4,
       "adaptiveIcon": {
         "backgroundColor": "#0B0F1A",

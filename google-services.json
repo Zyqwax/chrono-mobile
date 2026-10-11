@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "846317760707",
+    "project_id": "chrono-6a9d1",
+    "storage_bucket": "chrono-6a9d1.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:846317760707:android:c32b9f8a5f032acc33b276",
+        "android_client_info": {
+          "package_name": "com.zyqwax.chrono"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAKgWY-FI0doXWQNyd93wpNLx7dBTQE8IE"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -40,3 +40,6 @@ pnpm-debug.*
 # generated native folders
 /ios
 /android
+
+# Firebase Admin SDK Private Keys
+*-firebase-adminsdk-*.json
