@@ -18,6 +18,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { GiftedChat, IMessage, Message as GiftedChatMessage } from 'react-native-gifted-chat';
 import { Message, Room } from '../types';
 import { useChatStore } from '../store/useChatStore';
+import { notificationService } from '../services/notifications';
 import { RoomInfoModal } from './RoomInfoModal';
 import { VoiceRoomSheet } from './VoiceRoomSheet';
 import { ChronoAvatar } from './ChronoAvatar';
@@ -142,8 +143,9 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({ room, onBack }) 
   );
 
   useEffect(() => {
+    notificationService.clearRoomNotifications(room.id);
     loadChat();
-  }, [loadChat]);
+  }, [loadChat, room.id]);
 
   // "Yazıyor" bildirimi: her tuş vuruşunda socket'e emit etmek yerine
   // bir kez 'true' gönder, 3sn hareketsizlikte 'false' gönder

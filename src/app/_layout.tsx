@@ -8,6 +8,7 @@ import {
 } from 'react-native';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
+import * as Notifications from 'expo-notifications';
 import { useChatStore } from '../store/useChatStore';
 import { ActiveCallModal } from '../components/ActiveCallModal';
 import { updateService } from '../services/updates';
@@ -50,6 +51,17 @@ export default function RootLayout() {
     }, 2500);
     return () => clearTimeout(timer);
   }, []);
+
+  // Mesaj bildirimine tıklandığında ilgili odaya yönlendir
+  useEffect(() => {
+    const sub = Notifications.addNotificationResponseReceivedListener((response) => {
+      const data = response.notification.request.content.data;
+      if (data?.type === 'message' && data?.roomId) {
+        router.push({ pathname: '/chat/[id]', params: { id: data.roomId as string } });
+      }
+    });
+    return () => sub.remove();
+  }, [router]);
 
   // Oturum durumuna göre rotaları yönet
   useEffect(() => {

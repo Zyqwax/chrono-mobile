@@ -11,6 +11,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { ChatRoomScreen } from '../../components/ChatRoomScreen';
 import { useChatStore } from '../../store/useChatStore';
+import { notificationService } from '../../services/notifications';
 import { chronoTheme } from '../../theme/colors';
 
 const { colors } = chronoTheme;
@@ -28,6 +29,7 @@ export default function ChatDetailRoute() {
 
   useEffect(() => {
     if (!id) return;
+    notificationService.clearRoomNotifications(id);
     const store = useChatStore.getState();
     const existing =
       store.rooms.find((r) => r.id === id) ||

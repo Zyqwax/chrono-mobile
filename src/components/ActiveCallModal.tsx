@@ -156,21 +156,19 @@ export const ActiveCallModal: React.FC = () => {
     if (isActive && activeCall) {
       setCallDuration(0);
       const otherName = otherUser?.displayName || otherUser?.username || 'Kullanıcı';
-      notificationService.showOngoingCallNotification(otherName, activeCall.video, activeCall.callId);
+      const callStartTime = Date.now();
 
+      // Arama bağlandığında YALNIZCA BİR KEZ ongoing bildirimi planla (Android kronometresi sistem tarafından işletilir)
+      notificationService.showOngoingCallNotification(
+        otherName,
+        activeCall.video,
+        activeCall.callId,
+        callStartTime,
+      );
+
+      // Yalnızca modal içi süre sayacı (artık periyodik bildirim basmaz)
       timer = setInterval(() => {
-        setCallDuration((prev) => {
-          const next = prev + 1;
-          if (next % 5 === 0) {
-            notificationService.showOngoingCallNotification(
-              otherName,
-              activeCall.video,
-              activeCall.callId,
-              formatDuration(next),
-            );
-          }
-          return next;
-        });
+        setCallDuration((prev) => prev + 1);
       }, 1000);
 
       // LiveKit token'ını sunucudan çek

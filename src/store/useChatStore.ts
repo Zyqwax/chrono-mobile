@@ -605,9 +605,12 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     // Önceki yüklenmiş önbellek mesajlarını anında getir (0ms gecikme)
     const cached = room ? get().roomMessages[room.id] || [] : [];
     set({ activeRoom: room, messages: cached, typingUsers: [] });
-    if (socket && room) {
-      socket.emit('join_room', { roomId: room.id });
-      get().markAsRead(room.id);
+    if (room) {
+      notificationService.clearRoomNotifications(room.id);
+      if (socket) {
+        socket.emit('join_room', { roomId: room.id });
+        get().markAsRead(room.id);
+      }
     }
   },
 
@@ -960,6 +963,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   },
 
   markAsRead: async (roomId: string) => {
+    notificationService.clearRoomNotifications(roomId);
     const socket = getSocket();
     if (socket && socket.connected) {
       socket.emit('mark_read', { roomId });

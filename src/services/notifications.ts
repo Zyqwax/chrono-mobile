@@ -19,6 +19,8 @@ Notifications.setNotificationHandler({
 class NotificationService {
   private isConfigured = false;
   private currentCallNotificationId: string | null = null;
+  // Oda bazlı okunmamış mesaj sayaçları (WhatsApp stili stackleme için)
+  private roomUnreadCounts = new Map<string, number>();
 
   async init() {
     if (this.isConfigured) return;
@@ -32,12 +34,23 @@ class NotificationService {
       }
 
       if (Platform.OS === 'android') {
-        // 1. Mesaj Bildirim Kanalı (Öncelikli & Sesli)
-        await Notifications.setNotificationChannelAsync('messages_channel', {
-          name: 'Mesajlar',
+        // Eski kanalları temizle
+        try {
+          await Notifications.deleteNotificationChannelAsync('messages_channel');
+          await Notifications.deleteNotificationChannelAsync('ongoing_calls_channel');
+          await Notifications.deleteNotificationChannelAsync('ongoing_calls_channel_v2');
+        } catch {
+          // yut
+        }
+
+        // 1. Sohbet Mesaj Bildirim Kanalı (Öncelikli & Titreşimli)
+        await Notifications.setNotificationChannelAsync('chat-messages', {
+          name: 'Sohbet Mesajları',
           importance: Notifications.AndroidImportance.HIGH,
           vibrationPattern: [0, 250, 250, 250],
           lightColor: '#38BDF8',
+          enableVibrate: true,
+          showBadge: true,
         });
 
         // 2. Gelen Arama Bildirim Kanalı (En yüksek öncelik / Heads-up)
@@ -46,18 +59,12 @@ class NotificationService {
           importance: Notifications.AndroidImportance.MAX,
           vibrationPattern: [0, 1000, 1000, 1000],
           lightColor: '#10B981',
+          enableVibrate: true,
         });
 
-        // Eski ses çıkaran ongoing kanalını temizle
-        try {
-          await Notifications.deleteNotificationChannelAsync('ongoing_calls_channel');
-        } catch {
-          // yut
-        }
-
-        // 3. Aktif Görüşme Bildirim Kanalı (Canlı, sessiz, ötmeyen bildirim çubuğu)
-        await Notifications.setNotificationChannelAsync('ongoing_calls_channel_v2', {
-          name: 'Aktif Görüşmeler (Canlı Bildirim)',
+        // 3. Canlı Sesli Arama Bildirim Kanalı (Sessiz, titreşimsiz, düşük önem düzeyi)
+        await Notifications.setNotificationChannelAsync('ongoing-call', {
+          name: 'Aktif Görüşme',
           importance: Notifications.AndroidImportance.LOW,
           vibrationPattern: [],
           sound: null,
@@ -82,7 +89,7 @@ class NotificationService {
     }
   }
 
-  // Giden / Yeni gelen mesajlar için bildirim
+  // Sohbet odasından yeni mesaj geldiğinde bildirim göster (WhatsApp stili stackleme)
   async showMessageNotification(senderName: string, text: string, roomId: string) {
     try {
       // Eğer arama JSON objesi geldiyse bildirim olarak ham JSON gösterme
@@ -109,19 +116,40 @@ class NotificationService {
         }
       }
 
+      // Oda bazlı okunmamış mesaj sayacını artır
+      const unreadCount = (this.roomUnreadCounts.get(roomId) || 0) + 1;
+      this.roomUnreadCounts.set(roomId, unreadCount);
+
+      // WhatsApp Stili Format:
+      // 1 mesaj varsa sadece mesaj metni; birden fazla varsa "${unreadCount} yeni mesaj: ${sonMesaj}"
+      const notificationBody =
+        unreadCount > 1 ? `${unreadCount} yeni mesaj: ${displayText}` : displayText;
+
       await Notifications.scheduleNotificationAsync({
+        identifier: `chat_${roomId}`, // Sabit identifier: bildirim paneli dolmak yerine mevcut bildirim güncellenir
         content: {
           title: senderName,
-          body: displayText,
+          body: notificationBody,
           data: { roomId, type: 'message' },
           sound: true,
           color: '#38BDF8',
-          ...(Platform.OS === 'android' ? { channelId: 'messages_channel' } : {}),
+          ...(Platform.OS === 'android' ? { channelId: 'chat-messages' } : {}),
+          ...(Platform.OS === 'ios' ? { threadIdentifier: `room_${roomId}` } : {}),
         },
         trigger: null, // Hemen göster
       });
     } catch (err) {
       console.warn('Mesaj bildirimi gösterme hatası:', err);
+    }
+  }
+
+  // Kullanıcı odaya girdiğinde ilgili odanın bildirimini temizle ve sayacı sıfırla
+  async clearRoomNotifications(roomId: string) {
+    try {
+      this.roomUnreadCounts.delete(roomId);
+      await Notifications.dismissNotificationAsync(`chat_${roomId}`);
+    } catch (err) {
+      // yut
     }
   }
 
@@ -158,27 +186,36 @@ class NotificationService {
     }
   }
 
-  // Aktif arama devam ederken bildirim panelinde kalıcı sessiz canlı arama kartı göster
+  // Aktif arama devam ederken bildirim panelinde kalıcı canlı arama kartı göster (Kronometreli)
   async showOngoingCallNotification(
     otherUserName: string,
     isVideo: boolean,
     callId: string,
-    durationText?: string,
+    startTime: number = Date.now(),
   ) {
     try {
       await Notifications.scheduleNotificationAsync({
-        identifier: 'chrono_ongoing_call',
+        identifier: 'active_voice_call', // Sabit identifier
         content: {
           title: isVideo ? '📹 Chrono Görüntülü Arama' : '📞 Chrono Sesli Arama',
-          body: `${otherUserName} ile görüşme devam ediyor ${durationText ? `(${durationText})` : ''} · Dokunarak uygulamaya dönün`,
-          data: { callId, type: 'active_call', isSilent: true },
+          body: `${otherUserName} ile görüşme devam ediyor · Dokunarak uygulamaya dönün`,
+          data: { callId, type: 'active_call', isSilent: true, startTime },
           sound: false,
           color: '#10B981',
           priority: Notifications.AndroidNotificationPriority.LOW,
           sticky: true,
           autoDismiss: false,
           vibrate: [],
-          ...(Platform.OS === 'android' ? { channelId: 'ongoing_calls_channel_v2' } : {}),
+          ...(Platform.OS === 'android' ? { channelId: 'ongoing-call' } : {}),
+          // Android native kronometre ve ongoing bildirim desteği
+          ...({
+            android: {
+              channelId: 'ongoing-call',
+              ongoing: true,
+              usesChronometer: true,
+              chronometerBase: startTime,
+            },
+          } as any),
         },
         trigger: null,
       });
@@ -187,10 +224,11 @@ class NotificationService {
     }
   }
 
-  // Aktif arama sonlandığında bildirim panelindeki kalıcı kartı temizle
+  // Aktif arama sonlandığında (hang up / reject) bildirim panelindeki canlı kartı kapat
   async dismissOngoingCallNotification() {
     try {
-      await Notifications.dismissNotificationAsync('chrono_ongoing_call');
+      await Notifications.dismissNotificationAsync('active_voice_call');
+      await Notifications.dismissNotificationAsync('chrono_ongoing_call').catch(() => {});
     } catch (err) {
       // yut
     }
