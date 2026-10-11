@@ -4,6 +4,7 @@ import {
   Alert,
   Animated,
   Image,
+  ImageBackground,
   Keyboard,
   KeyboardAvoidingView,
   Platform,
@@ -25,6 +26,7 @@ import { ChronoAvatar } from './ChronoAvatar';
 import { chronoTheme } from '../theme/colors';
 import { useShallow } from 'zustand/react/shallow';
 
+const CHAT_BACKGROUND = require('../../assets/chrono-chat-background.png');
 const EMPTY_MESSAGES: Message[] = [];
 import { formatTime } from '../utils/format';
 
@@ -410,7 +412,12 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({ room, onBack }) 
       {/* ------------------------------------------------------------- */}
       {/* Mesaj Beslemesi & Gifted Chat Loader                          */}
       {/* ------------------------------------------------------------- */}
-      <View style={styles.chatArea}>
+      <ImageBackground
+        source={CHAT_BACKGROUND}
+        style={styles.chatArea}
+        imageStyle={styles.chatBackgroundImage}
+        resizeMode="cover"
+      >
         {loadError && messages.length === 0 ? (
           <View style={styles.giftedLoaderContainer}>
             <View style={styles.emptyFeedIconBg}>
@@ -445,7 +452,7 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({ room, onBack }) 
             onCallPress={handleStartCall}
           />
         )}
-        </View>
+      </ImageBackground>
 
         {/* Yanıtlama veya Düzenleme Banner'ı */}
         {(replyMessage || editingMessage) && (
@@ -946,7 +953,10 @@ const styles = StyleSheet.create({
   },
   chatArea: {
     flex: 1,
-    backgroundColor: colors.backgroundSecondary,
+    backgroundColor: '#080B14',
+  },
+  chatBackgroundImage: {
+    opacity: 0.95,
   },
   messagesList: {
     paddingHorizontal: 12,
