@@ -23,6 +23,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { api } from '../services/api';
 import { useChatStore } from '../store/useChatStore';
+import { registerForPushNotificationsAsync } from '../services/notifications';
 
 type AuthStage =
   | 'CHECK_USERNAME'
@@ -236,9 +237,17 @@ export const AuthScreen: React.FC = () => {
 
     try {
       setLoading(true);
+      let pushToken: string | null = null;
+      try {
+        pushToken = await registerForPushNotificationsAsync();
+      } catch (tokenErr) {
+        console.warn('Login push token alma uyarısı:', tokenErr);
+      }
+
       const res = await api.post('/auth/login', {
         identifier: username.trim(),
         password,
+        pushToken,
       });
       setAuth(res.data.user, res.data.accessToken);
       router.replace('/(tabs)');
@@ -285,11 +294,19 @@ export const AuthScreen: React.FC = () => {
 
     try {
       setLoading(true);
+      let pushToken: string | null = null;
+      try {
+        pushToken = await registerForPushNotificationsAsync();
+      } catch (tokenErr) {
+        console.warn('Register push token alma uyarısı:', tokenErr);
+      }
+
       const res = await api.post('/auth/register', {
         username: username.trim().toLowerCase(),
         displayName: displayName.trim(),
         email: email.trim().toLowerCase(),
         password,
+        pushToken,
       });
 
       setAuth(res.data.user, res.data.accessToken);

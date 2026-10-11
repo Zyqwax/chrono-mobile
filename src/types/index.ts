@@ -15,6 +15,7 @@ export interface User {
   bio?: string | null;
   birthday?: string | null;
   status?: UserStatus;
+  pushToken?: string | null;
   lastSeenAt?: string | null;
   createdAt?: string;
 }

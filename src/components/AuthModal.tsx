@@ -11,6 +11,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useChatStore } from '../store/useChatStore';
 import { api } from '../services/api';
+import { registerForPushNotificationsAsync } from '../services/notifications';
 
 interface Props {
   visible: boolean;
@@ -32,18 +33,27 @@ export const AuthModal: React.FC<Props> = ({ visible, onClose }) => {
     setLoading(true);
 
     try {
+      let pushToken: string | null = null;
+      try {
+        pushToken = await registerForPushNotificationsAsync();
+      } catch (tokenErr) {
+        console.warn('AuthModal push token alma uyarısı:', tokenErr);
+      }
+
       if (isRegister) {
         const res = await api.post('/auth/register', {
           email,
           username,
           displayName: displayName || username,
           password,
+          pushToken,
         });
         setAuth(res.data.user, res.data.accessToken);
       } else {
         const res = await api.post('/auth/login', {
           identifier: email || username,
           password,
+          pushToken,
         });
         setAuth(res.data.user, res.data.accessToken);
       }

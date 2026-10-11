@@ -26,6 +26,7 @@ import { ChronoAvatar } from './ChronoAvatar';
 import { ChronoProgressRing, ChronoRingStatus } from './ChronoProgressRing';
 import { chronoTheme } from '../theme/colors';
 import { useShallow } from 'zustand/react/shallow';
+import { requestCallPermissions } from '../services/permissions';
 
 const CHAT_BACKGROUND = require('../../assets/chrono-chat-background.png');
 const EMPTY_MESSAGES: Message[] = [];
@@ -271,7 +272,11 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({ room, onBack }) 
   };
 
   const handleStartCall = useCallback(
-    (video = false) => {
+    async (video = false) => {
+      // 1. Önce mikrofon ve kamera izinlerini sor ve doğrula
+      const hasPerms = await requestCallPermissions(video);
+      if (!hasPerms) return;
+
       Alert.alert(
         video ? 'Görüntülü Arama' : 'Sesli Arama',
         `${chatTitle} kullanıcısını aramak istiyor musunuz?`,

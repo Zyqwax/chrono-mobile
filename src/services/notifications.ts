@@ -37,11 +37,6 @@ Notifications.setNotificationHandler({
  * Fiziksel cihaz kontrolü, Android MAX önem kanalı ve EAS projectId ile Expo Push Token alır.
  */
 export async function registerForPushNotificationsAsync(): Promise<string | null> {
-  if (!Device.isDevice) {
-    console.log('📱 Push Notifications: Fiziksel cihaz gereklidir (Emülatörde simüle edilemez).');
-    return null;
-  }
-
   if (Platform.OS === 'android') {
     await Notifications.setNotificationChannelAsync('chat-messages', {
       name: 'Sohbet Mesajları',
@@ -53,32 +48,63 @@ export async function registerForPushNotificationsAsync(): Promise<string | null
     });
   }
 
-  const { status: existingStatus } = await Notifications.getPermissionsAsync();
-  let finalStatus = existingStatus;
-  if (existingStatus !== 'granted') {
-    const { status } = await Notifications.requestPermissionsAsync();
-    finalStatus = status;
+  // Bildirim izni kontrolü
+  let finalStatus = 'undetermined';
+  try {
+    const { status: existingStatus } = await Notifications.getPermissionsAsync();
+    finalStatus = existingStatus;
+    if (existingStatus !== 'granted') {
+      const { status } = await Notifications.requestPermissionsAsync();
+      finalStatus = status;
+    }
+  } catch (permErr) {
+    console.warn('Bildirim izni istenirken hata:', permErr);
   }
 
   if (finalStatus !== 'granted') {
-    console.warn('⚠️ Push bildirim izni verilmedi.');
+    console.warn('⚠️ Push bildirim izni verilmedi (Durum:', finalStatus, ')');
+    // Emülatör veya izin reddinde geliştirme modunda token atanması gerekiyorsa:
+    if (__DEV__ && !Device.isDevice) {
+      const devToken = `ExponentPushToken[dev-emulator-${Platform.OS}]`;
+      console.log('🛠️ [DEV] Emülatör geliştirme push token kullanılıyor:', devToken);
+      return devToken;
+    }
+    return null;
+  }
+
+  // Emülatör kontrolü: Fiziksel cihaz değilse Expo Push remote servisi çalışmaz
+  if (!Device.isDevice) {
+    console.log('📱 Push Notifications: Fiziksel cihaz değil (Emülatör/Simülatör).');
+    if (__DEV__) {
+      const devToken = `ExponentPushToken[dev-emulator-${Platform.OS}]`;
+      console.log('🛠️ [DEV] Emülatör geliştirme push token kullanılıyor:', devToken);
+      return devToken;
+    }
     return null;
   }
 
   const projectId =
     Constants?.expoConfig?.extra?.eas?.projectId ??
     Constants?.easConfig?.projectId ??
+    (Constants as any)?.manifest2?.extra?.eas?.projectId ??
     '293cda25-728d-4ab4-b77f-df2db668e2f1';
 
   try {
-    const tokenData = await Notifications.getExpoPushTokenAsync({
-      projectId,
-    });
+    const tokenData = await Notifications.getExpoPushTokenAsync(
+      projectId ? { projectId } : undefined,
+    );
     console.log('📲 Expo Push Token başarıyla alındı:', tokenData.data);
     return tokenData.data;
   } catch (error) {
-    console.warn('Expo push token alınırken hata:', error);
-    return null;
+    console.warn('Expo push token projectId ile alınamadı, parametresiz deneniyor:', error);
+    try {
+      const tokenData = await Notifications.getExpoPushTokenAsync();
+      console.log('📲 Expo Push Token başarıyla alındı (fallback):', tokenData.data);
+      return tokenData.data;
+    } catch (err2) {
+      console.warn('Expo push token fallback ile de alınamadı:', err2);
+      return null;
+    }
   }
 }
 

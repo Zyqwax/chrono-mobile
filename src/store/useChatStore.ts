@@ -18,6 +18,7 @@ import {
 } from '../services/notifications';
 import { liveKitService } from '../services/livekit';
 import { localDb } from '../services/localDb';
+import { requestCallPermissions } from '../services/permissions';
 
 const STORAGE_TOKEN_KEY = '@chrono_auth_token';
 const STORAGE_USER_KEY = '@chrono_auth_user';
@@ -30,6 +31,7 @@ interface ChatStore {
   initAuth: () => Promise<void>;
   setAuth: (user: User | null, token: string | null) => void;
   logout: () => void;
+  syncPushToken: () => Promise<string | null>;
   fetchMe: () => Promise<void>;
   updateProfile: (data: {
     displayName?: string;
@@ -139,6 +141,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         // Sunucudan en güncel profil ve ayarları çek
         get().fetchMe().catch(() => undefined);
         get().fetchSettings().catch(() => undefined);
+        get().syncPushToken().catch(console.warn);
         notificationService.init().catch(console.warn);
       } else {
         notificationService.init().catch(console.warn);
@@ -148,6 +151,32 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     } finally {
       set({ isAuthLoading: false });
     }
+  },
+
+  syncPushToken: async () => {
+    const token = get().token;
+    if (!token) return null;
+
+    try {
+      const pushToken = await registerForPushNotificationsAsync();
+      if (pushToken) {
+        const res = await api.put('/users/me/push-token', { pushToken });
+        if (res.data) {
+          set((state) => {
+            const nextUser = state.currentUser ? { ...state.currentUser, pushToken } : null;
+            if (nextUser) {
+              AsyncStorage.setItem(STORAGE_USER_KEY, JSON.stringify(nextUser)).catch(console.error);
+            }
+            return { currentUser: nextUser };
+          });
+          console.log('✅ Push token senkronize edildi ve kaydedildi:', pushToken);
+        }
+        return pushToken;
+      }
+    } catch (err: any) {
+      console.warn('❌ Push token senkronizasyon hatası:', err?.message || err);
+    }
+    return null;
   },
 
   setAuth: (user, token) => {
@@ -164,13 +193,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
 
     if (token) {
       // Cihazın Expo Push Token'ını al ve sunucudaki profile kaydet
-      registerForPushNotificationsAsync()
-        .then((pushToken) => {
-          if (pushToken) {
-            api.put('/users/me/push-token', { pushToken }).catch(() => {});
-          }
-        })
-        .catch(console.warn);
+      get().syncPushToken().catch(console.warn);
 
       const socket = connectSocket(token);
 
@@ -1411,6 +1434,12 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   activeCall: null,
 
   startCall: async (roomId: string, video = false) => {
+    // 1. Önce mikrofon ve kamera izinlerini doğrula / sor
+    const hasPerms = await requestCallPermissions(video);
+    if (!hasPerms) {
+      return;
+    }
+
     const socket = getSocket();
     if (socket && socket.connected) {
       socket.emit('call_start', { roomId, video }, (res: any) => {
@@ -1426,6 +1455,12 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   },
 
   acceptCall: async (callId: string) => {
+    const activeCall = get().activeCall;
+    const hasPerms = await requestCallPermissions(activeCall?.video || false);
+    if (!hasPerms) {
+      return;
+    }
+
     const socket = getSocket();
     if (socket && socket.connected) {
       socket.emit('call_accept', { callId });
