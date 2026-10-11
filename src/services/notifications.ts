@@ -1,5 +1,6 @@
 import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
+import { foregroundServiceManager } from './foregroundService';
 
 // Uygulama açıkken bildirimlerin görünüm davranışı
 Notifications.setNotificationHandler({
@@ -186,13 +187,23 @@ class NotificationService {
     }
   }
 
-  // Aktif arama devam ederken bildirim panelinde kalıcı canlı arama kartı göster (Kronometreli)
+  // Aktif arama devam ederken Android Foreground Service veya bildirim panelinde canlı arama kartı göster (Kronometreli)
   async showOngoingCallNotification(
     otherUserName: string,
     isVideo: boolean,
     callId: string,
     startTime: number = Date.now(),
   ) {
+    if (Platform.OS === 'android') {
+      await foregroundServiceManager.startCallForegroundService({
+        callId,
+        otherUserName,
+        isVideo,
+        startTime,
+      });
+      return;
+    }
+
     try {
       await Notifications.scheduleNotificationAsync({
         identifier: 'active_voice_call', // Sabit identifier
@@ -205,17 +216,6 @@ class NotificationService {
           priority: Notifications.AndroidNotificationPriority.LOW,
           sticky: true,
           autoDismiss: false,
-          vibrate: [],
-          ...(Platform.OS === 'android' ? { channelId: 'ongoing-call' } : {}),
-          // Android native kronometre ve ongoing bildirim desteği
-          ...({
-            android: {
-              channelId: 'ongoing-call',
-              ongoing: true,
-              usesChronometer: true,
-              chronometerBase: startTime,
-            },
-          } as any),
         },
         trigger: null,
       });
@@ -224,9 +224,12 @@ class NotificationService {
     }
   }
 
-  // Aktif arama sonlandığında (hang up / reject) bildirim panelindeki canlı kartı kapat
+  // Aktif arama sonlandığında (hang up / reject) canlı kartı kapat ve servisi durdur
   async dismissOngoingCallNotification() {
     try {
+      if (Platform.OS === 'android') {
+        await foregroundServiceManager.stopCallForegroundService();
+      }
       await Notifications.dismissNotificationAsync('active_voice_call');
       await Notifications.dismissNotificationAsync('chrono_ongoing_call').catch(() => {});
     } catch (err) {

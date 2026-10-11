@@ -3,7 +3,7 @@
     "name": "Chrono",
     "slug": "chrono",
     "scheme": "chrono",
-    "version": "1.1.0",
+    "version": "1.2.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
@@ -15,7 +15,7 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.zyqwax.chrono",
-      "buildNumber": "2",
+      "buildNumber": "3",
       "infoPlist": {
         "NSMicrophoneUsageDescription": "Chrono, sesli ve görüntülü görüşmeler için mikrofonunuza erişim gerektirir.",
         "NSCameraUsageDescription": "Chrono, görüntülü görüşmeler için kameranıza erişim gerektirir.",
@@ -27,7 +27,7 @@
     },
     "android": {
       "package": "com.zyqwax.chrono",
-      "versionCode": 2,
+      "versionCode": 3,
       "adaptiveIcon": {
         "backgroundColor": "#0B0F1A",
         "foregroundImage": "./assets/android-icon-foreground.png",
@@ -37,6 +37,11 @@
       "predictiveBackGestureEnabled": false,
       "softwareKeyboardLayoutMode": "pan",
       "permissions": [
+        "FOREGROUND_SERVICE",
+        "FOREGROUND_SERVICE_MICROPHONE",
+        "FOREGROUND_SERVICE_PHONE_CALL",
+        "RECORD_AUDIO",
+        "WAKE_LOCK",
         "android.permission.RECORD_AUDIO",
         "android.permission.CAMERA",
         "android.permission.MODIFY_AUDIO_SETTINGS",
@@ -68,6 +73,7 @@
       "expo-router",
       "expo-updates",
       "@livekit/react-native-expo-plugin",
+      "./plugins/withNotifeeForegroundService.js",
       [
         "@config-plugins/react-native-callkeep",
         {

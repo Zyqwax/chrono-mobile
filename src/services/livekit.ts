@@ -1,4 +1,5 @@
 import { Room, RoomEvent, Track, type VideoTrack } from 'livekit-client';
+import { AudioSession, AndroidAudioTypePresets } from '@livekit/react-native';
 
 let isLiveKitNativeReady = false;
 
@@ -119,6 +120,24 @@ class LiveKitService {
         }
       });
 
+      try {
+        await AudioSession.configureAudio({
+          android: {
+            audioTypeOptions: AndroidAudioTypePresets.communication,
+            preferredOutputList: enableCam
+              ? ['speaker', 'bluetooth', 'headset']
+              : ['earpiece', 'speaker', 'bluetooth', 'headset'],
+          },
+          ios: {
+            defaultOutput: enableCam ? 'speaker' : 'earpiece',
+          },
+        });
+        await AudioSession.startAudioSession();
+        console.log('🔊 LiveKit AudioSession başlatıldı (arama ses odaklaması devrede).');
+      } catch (audioErr) {
+        console.warn('AudioSession yapılandırma hatası:', audioErr);
+      }
+
       await room.connect(serverUrl, token);
 
       if (enableMic) {
@@ -189,7 +208,20 @@ class LiveKitService {
     }
   }
 
+  async setSpeakerOutput(enabled: boolean) {
+    try {
+      await AudioSession.selectAudioOutput(enabled ? 'speaker' : 'earpiece');
+    } catch (err) {
+      console.warn('Hoparlör yönlendirme hatası:', err);
+    }
+  }
+
   async disconnect() {
+    try {
+      await AudioSession.stopAudioSession();
+    } catch {
+      // yut
+    }
     if (this.currentRoom) {
       try {
         await this.currentRoom.disconnect();

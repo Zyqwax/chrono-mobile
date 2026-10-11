@@ -22,6 +22,7 @@ import { chronoTheme } from '../theme/colors';
 import { callKeepService } from '../services/callkeep';
 import { liveKitService, type VideoTracksState } from '../services/livekit';
 import { notificationService } from '../services/notifications';
+import { foregroundServiceManager } from '../services/foregroundService';
 
 const { colors } = chronoTheme;
 
@@ -82,6 +83,14 @@ export const ActiveCallModal: React.FC = () => {
     return () => {
       subscription.remove();
     };
+  }, []);
+
+  // Notifee Foreground Service canlı bildirim kartına tıklandığında aramayı tam ekran yap
+  useEffect(() => {
+    const unsub = foregroundServiceManager.onNotificationPress(() => {
+      setIsMinimized(false);
+    });
+    return unsub;
   }, []);
 
   // Yeni arama başladığında tam ekran aç
@@ -237,6 +246,13 @@ export const ActiveCallModal: React.FC = () => {
       liveKitService.setCameraEnabled(isVideoOn);
     }
   }, [isVideoOn, isActive]);
+
+  // Hoparlör durumu değiştiğinde WebRTC ses çıkışını güncelle (Hoparlör / Ahize)
+  useEffect(() => {
+    if (isActive) {
+      liveKitService.setSpeakerOutput(speakerOn);
+    }
+  }, [speakerOn, isActive]);
 
   if (!activeCall) return null;
 
