@@ -301,27 +301,27 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       });
 
       // Karşı tarafın okuduğu bilgisi (Halka 360° dolumu)
-      socket.on('messages_read', ({ roomId, readAt }: { roomId: string; readAt: string }) => {
-        const state = get();
-        const targetRoom = state.rooms.find((r) => r.id === roomId);
-        const isDirect = targetRoom ? targetRoom.type === 'DIRECT' : state.activeRoom?.type === 'DIRECT';
-        const myReadReceipts = state.settings?.readReceipts ?? true;
-
-        // DM'de okundu bilgisini kapatan kişi ne karşıya gönderir ne de karşıdan alır
-        if (isDirect && !myReadReceipts) {
-          return;
-        }
-
-        set((s) => ({
-          rooms: s.rooms.map((r) =>
-            r.id === roomId ? { ...r, othersReadAt: readAt } : r,
-          ),
-          activeRoom:
-            s.activeRoom?.id === roomId
-              ? { ...s.activeRoom, othersReadAt: readAt }
-              : s.activeRoom,
-        }));
-      });
+      socket.on(
+        'messages_read',
+        ({
+          roomId,
+          readAt,
+        }: {
+          roomId: string;
+          userId?: string;
+          readAt: string | null;
+        }) => {
+          set((s) => ({
+            rooms: s.rooms.map((r) =>
+              r.id === roomId ? { ...r, othersReadAt: readAt } : r,
+            ),
+            activeRoom:
+              s.activeRoom?.id === roomId
+                ? { ...s.activeRoom, othersReadAt: readAt }
+                : s.activeRoom,
+          }));
+        },
+      );
 
       // 6. Yazıyor göstergesi
       socket.on(
@@ -375,6 +375,13 @@ export const useChatStore = create<ChatStore>((set, get) => ({
             }
             return c;
           }),
+          activeRoom:
+            s.activeRoom?.peer && s.activeRoom.peer.id === data.userId
+              ? {
+                  ...s.activeRoom,
+                  peer: { ...s.activeRoom.peer, status: effectiveStatus, lastSeenAt: effectiveLastSeenAt },
+                }
+              : s.activeRoom,
         }));
       });
 
@@ -416,6 +423,18 @@ export const useChatStore = create<ChatStore>((set, get) => ({
             }
             return c;
           }),
+          activeRoom:
+            s.activeRoom?.peer && s.activeRoom.peer.id === data.id
+              ? {
+                  ...s.activeRoom,
+                  peer: {
+                    ...s.activeRoom.peer,
+                    ...data,
+                    status: effectiveStatus !== undefined ? effectiveStatus : s.activeRoom.peer.status,
+                    lastSeenAt: effectiveLastSeenAt !== undefined ? effectiveLastSeenAt : s.activeRoom.peer.lastSeenAt,
+                  },
+                }
+              : s.activeRoom,
         }));
       });
 
@@ -642,6 +661,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       set((state) => {
         let rooms = state.rooms;
         let contacts = state.contacts;
+        let activeRoom = state.activeRoom;
 
         // Çevrimiçi durumunu gizlediyse (NOBODY), mütekabiliyet gereği başkalarını da göremez
         if (newSettings.lastSeenVisibility === 'NOBODY') {
@@ -652,6 +672,12 @@ export const useChatStore = create<ChatStore>((set, get) => ({
             ...c,
             user: { ...c.user, status: 'HIDDEN', lastSeenAt: null },
           }));
+          if (activeRoom?.peer) {
+            activeRoom = {
+              ...activeRoom,
+              peer: { ...activeRoom.peer, status: 'HIDDEN', lastSeenAt: null },
+            };
+          }
         }
 
         // DM okundu bilgisini kapattıysa, DM odalarındaki othersReadAt bilgisini temizle
@@ -659,18 +685,21 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           rooms = rooms.map((r) =>
             r.type === 'DIRECT' ? { ...r, othersReadAt: null } : r,
           );
+          if (activeRoom && activeRoom.type === 'DIRECT') {
+            activeRoom = { ...activeRoom, othersReadAt: null };
+          }
         }
 
         return {
           settings: newSettings,
           rooms,
           contacts,
-          activeRoom:
-            state.activeRoom && newSettings.readReceipts === false && state.activeRoom.type === 'DIRECT'
-              ? { ...state.activeRoom, othersReadAt: null }
-              : state.activeRoom,
+          activeRoom,
         };
       });
+
+      // Gizlilik veya okundu bilgisi güncellendiğinde sunucudan güncel durumu çek
+      await get().fetchRooms().catch(() => undefined);
     } catch (err) {
       console.error('updateSettings error:', err);
     }

@@ -277,7 +277,7 @@ export function formatLastSeen(
     return { text: getTranslation('online', 'çevrimiçi'), isOnline: true };
   }
 
-  if (!lastSeenAt || status === 'HIDDEN') {
+  if (!lastSeenAt || status === 'HIDDEN' || status === 'NOBODY') {
     return { text: getTranslation('lastSeenRecently', 'son görülme yakınlarda'), isOnline: false };
   }
 

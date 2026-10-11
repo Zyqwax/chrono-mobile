@@ -128,12 +128,41 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({ room, onBack }) 
   const activeRoomId = useChatStore((s) => s.activeRoom?.id);
 
   // Karşı tarafın odayı son okuduğu tarih (anlık soket 'messages_read' ile güncellenir)
-  const currentOthersReadAt = useChatStore(
-    (s) =>
-      s.rooms.find((r) => r.id === room.id)?.othersReadAt ??
-      (s.activeRoom?.id === room.id ? s.activeRoom?.othersReadAt : room.othersReadAt) ??
-      room.othersReadAt,
-  );
+  const settings = useChatStore((s) => s.settings);
+  const currentRoom = useChatStore(
+    (s) => s.rooms.find((r) => r.id === room.id) || (s.activeRoom?.id === room.id ? s.activeRoom : null),
+  ) || room;
+  const currentPeer = currentRoom.peer || room.peer;
+
+  const isDirect = currentRoom.type === 'DIRECT';
+  const chatTitle = isDirect
+    ? currentPeer?.displayName || currentPeer?.username || 'Kullanıcı'
+    : currentRoom.name || 'Sohbet Odası';
+
+  const myOnlineVisible = (settings?.lastSeenVisibility ?? 'EVERYONE') !== 'NOBODY';
+  const isPeerOnline = isDirect && myOnlineVisible && currentPeer?.status === 'ONLINE';
+
+  // Karşılıklı (reciprocal) kural: Ben son görülmemi kapattıysam veya karşı taraf kapattıysa
+  // son görülme zamanı gizlenir ("son görülme yakınlarda" / "last seen recently" gösterilir)
+  const peerStatus = myOnlineVisible ? currentPeer?.status : 'HIDDEN';
+  const peerLastSeen = myOnlineVisible ? currentPeer?.lastSeenAt : null;
+  const peerStatusInfo = formatLastSeen(peerStatus, peerLastSeen);
+
+  const myReadReceipts = settings?.readReceipts ?? true;
+  // Oda sohbetlerinde okundu bilgisi kapatma geçerli olmaz; direkt (DM) sohbetlerde kapatan ne gönderir ne alır
+  const canShowReadReceipt = !isDirect || myReadReceipts;
+
+  const currentOthersReadAt = useChatStore((s) => {
+    const storeRoom =
+      s.rooms.find((r) => r.id === room.id) ||
+      (s.activeRoom?.id === room.id ? s.activeRoom : null);
+    if (storeRoom && storeRoom.othersReadAt !== undefined) {
+      return storeRoom.othersReadAt;
+    }
+    return room.othersReadAt ?? null;
+  });
+
+  const effectiveOthersReadAt = canShowReadReceipt ? currentOthersReadAt : null;
 
   // Odaya girildiğinde okundu bilgisini sunucuya bildir
   useEffect(() => {
@@ -155,18 +184,6 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({ room, onBack }) 
       }
     }
   }, [messages.length, room.id, currentUserId, markAsRead]);
-
-  const isDirect = room.type === 'DIRECT';
-  const chatTitle = isDirect
-    ? room.peer?.displayName || room.peer?.username || 'Kullanıcı'
-    : room.name || 'Sohbet Odası';
-
-  const settings = useChatStore((s) => s.settings);
-  const myOnlineVisible = (settings?.lastSeenVisibility ?? 'EVERYONE') !== 'NOBODY';
-  const isPeerOnline = isDirect && myOnlineVisible && room.peer?.status === 'ONLINE';
-
-  const myReadReceipts = settings?.readReceipts ?? true;
-  const canShowReadReceipt = !isDirect || myReadReceipts;
 
   const loadChat = useCallback(
     async (isRetry = false) => {
@@ -325,8 +342,8 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({ room, onBack }) 
       const isPending = !!item.isPending;
       const isRead = Boolean(
         canShowReadReceipt &&
-        currentOthersReadAt &&
-        new Date(currentOthersReadAt).getTime() >= new Date(item.createdAt).getTime(),
+        effectiveOthersReadAt &&
+        new Date(effectiveOthersReadAt).getTime() >= new Date(item.createdAt).getTime(),
       );
       return {
         _id: item.id,
@@ -343,7 +360,7 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({ room, onBack }) 
         raw: item,
       } as IMessage & { raw: Message };
     });
-  }, [messages, currentOthersReadAt, canShowReadReceipt]);
+  }, [messages, effectiveOthersReadAt, canShowReadReceipt]);
 
   return (
     <SafeAreaView style={styles.container} edges={['top', 'left', 'right', "bottom"]}>
@@ -368,7 +385,7 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({ room, onBack }) 
           >
             <ChronoAvatar
               size={38}
-              uri={isDirect ? room.peer?.avatarUrl : room.iconUrl}
+              uri={isDirect ? currentPeer?.avatarUrl : currentRoom.iconUrl}
               name={chatTitle}
               emoji={!isDirect && (chatTitle.startsWith('🔥') || true) ? (chatTitle.match(/^(\p{Emoji})/u)?.[0] || '🔥') : undefined}
               online={isDirect && isPeerOnline}
@@ -390,12 +407,12 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({ room, onBack }) 
                   isPeerOnline ? (
                     <Text style={{ color: '#10B981' }}>{getTranslation('online', 'çevrimiçi')}</Text>
                   ) : (
-                    <Text style={{ color: '#6EE7B7' }}>
-                      {formatLastSeen(room.peer?.status, room.peer?.lastSeenAt).text}
+                    <Text style={{ color: '#94A3B8' }}>
+                      {peerStatusInfo.text}
                     </Text>
                   )
                 ) : (
-                  `${room.membersCount || room.members?.length || 2} ${getTranslation('member', 'üye')} · ${activeVoiceCount > 0 ? `${activeVoiceCount} ${getTranslation('online', 'çevrimiçi')}` : `1 ${getTranslation('online', 'çevrimiçi')}`}`
+                  `${currentRoom.membersCount || currentRoom.members?.length || 2} ${getTranslation('member', 'üye')} · ${activeVoiceCount > 0 ? `${activeVoiceCount} ${getTranslation('online', 'çevrimiçi')}` : `1 ${getTranslation('online', 'çevrimiçi')}`}`
                 )}
               </Text>
             </View>
@@ -483,7 +500,7 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({ room, onBack }) 
               currentUserAvatar={currentUserAvatar || undefined}
               isDirect={isDirect}
               canShowReadReceipt={canShowReadReceipt}
-              othersReadAt={currentOthersReadAt}
+              othersReadAt={effectiveOthersReadAt}
               loading={loading}
               onLongPressMessage={handleMessageLongPress}
               onCallPress={handleStartCall}

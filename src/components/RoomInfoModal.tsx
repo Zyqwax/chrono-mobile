@@ -294,9 +294,11 @@ export const RoomInfoModal: React.FC<RoomInfoModalProps> = ({
                 @{room?.peer?.username || 'kullanici'}
               </Text>
               {(() => {
+                const storePeer = useChatStore.getState().rooms.find((r) => r.id === roomId)?.peer;
+                const peer = storePeer || room?.peer;
                 const myOnlineVisible = (settings?.lastSeenVisibility ?? 'EVERYONE') !== 'NOBODY';
-                const peerStatus = myOnlineVisible ? room?.peer?.status : 'HIDDEN';
-                const peerLastSeen = myOnlineVisible ? room?.peer?.lastSeenAt : null;
+                const peerStatus = myOnlineVisible ? peer?.status : 'HIDDEN';
+                const peerLastSeen = myOnlineVisible ? peer?.lastSeenAt : null;
                 const peerStatusInfo = formatLastSeen(peerStatus, peerLastSeen);
                 return (
                   <Text style={[styles.onlineStatus, peerStatusInfo.isOnline && { color: '#10B981' }]}>
