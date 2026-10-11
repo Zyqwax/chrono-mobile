@@ -2,7 +2,6 @@ import { Platform } from 'react-native';
 import notifee, {
   AndroidImportance,
   EventType,
-  type Notification,
 } from '@notifee/react-native';
 
 const CALL_FG_CHANNEL_ID = 'chrono_call_foreground';
@@ -11,24 +10,8 @@ const CALL_NOTIFICATION_ID = 'chrono_ongoing_call';
 type CallPressListener = () => void;
 const pressListeners = new Set<CallPressListener>();
 
-let isForegroundServiceRegistered = false;
-
-// Android ortamında Foreground Service işleyicisini tepe noktada kaydet
+// Android ortamında bildirime tıklandığında uygulamayı ve aktif görüşmeyi ön plana taşıma dinleyicisi
 if (Platform.OS === 'android') {
-  try {
-    notifee.registerForegroundService((notification: Notification) => {
-      return new Promise<void>(() => {
-        // Bu Promise çözümlenmediği sürece Android, Foreground Service'i
-        // ve bağlı olan WebRTC ses akışını arka planda/ekran kapalıyken öldürmez.
-      });
-    });
-    isForegroundServiceRegistered = true;
-    console.log('🛡️ Android Foreground Service runner başarıyla kaydedildi.');
-  } catch (err) {
-    console.warn('Foreground service kayıt uyarısı:', err);
-  }
-
-  // Bildirime tıklandığında uygulamayı ve aktif görüşmeyi ön plana taşıma dinleyicisi
   try {
     notifee.onForegroundEvent(({ type, detail }) => {
       if (
@@ -71,7 +54,8 @@ class ForegroundServiceManager {
   }
 
   /**
-   * Görüşme bağlandığında Android Foreground Service'i ve canlı arama kartını başlatır.
+   * Görüşme bağlandığında canlı arama kartını Android bildirim panelinde başlatır.
+   * Not: Android 14+ SecurityException çökmesini önlemek için doğrudan kalıcı ongoing bildirim kullanılır.
    */
   async startCallForegroundService({
     callId,
@@ -93,7 +77,7 @@ class ForegroundServiceManager {
         lightColor: '#10B981',
       });
 
-      // 2. Canlı bildirim kartını ve Foreground Service'i başlat
+      // 2. Canlı bildirim kartını başlat (ongoing: true, donanımsal kronometre)
       await notifee.displayNotification({
         id: CALL_NOTIFICATION_ID,
         title: isVideo ? '📹 Chrono Görüntülü Arama' : '📞 Chrono Sesli Arama',
@@ -104,11 +88,11 @@ class ForegroundServiceManager {
         },
         android: {
           channelId: CALL_FG_CHANNEL_ID,
-          asForegroundService: true, // Android Foreground Service'i bu bildirime bağlar
+          asForegroundService: false, // Android 14/15 FGS SecurityException çökmesini önler
           ongoing: true, // Kullanıcı bildirimi yana kaydırıp kapatamaz
           autoCancel: false,
           color: '#10B981',
-          showChronometer: true, // Android native kronometre (CPU uykudayken de ilerler)
+          showChronometer: true, // Android native kronometre
           chronometerDirection: 'up',
           timestamp: startTime,
           smallIcon: 'ic_launcher',
@@ -119,25 +103,24 @@ class ForegroundServiceManager {
       });
 
       this.isRunning = true;
-      console.log('🚀 Android Foreground Service (Aktif Arama) başlatıldı.');
+      console.log('🚀 Canlı arama bildirim kartı başlatıldı.');
     } catch (err) {
-      console.warn('Foreground Service başlatma hatası:', err);
+      console.warn('Canlı arama bildirimi başlatma hatası:', err);
     }
   }
 
   /**
-   * Görüşme sonlandığında Foreground Service'i ve bildirimi temizler.
+   * Görüşme sonlandığında bildirimi temizler.
    */
   async stopCallForegroundService(): Promise<void> {
     if (Platform.OS !== 'android') return;
 
     try {
       this.isRunning = false;
-      await notifee.stopForegroundService();
       await notifee.cancelNotification(CALL_NOTIFICATION_ID).catch(() => {});
-      console.log('🛑 Android Foreground Service durduruldu.');
+      console.log('🛑 Canlı arama bildirimi temizlendi.');
     } catch (err) {
-      console.warn('Foreground Service durdurma hatası:', err);
+      console.warn('Bildirim temizleme hatası:', err);
     }
   }
 

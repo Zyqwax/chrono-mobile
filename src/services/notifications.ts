@@ -8,11 +8,10 @@ Notifications.setNotificationHandler({
     const data = notification.request.content.data;
     const isSilent = Boolean(data?.isSilent || data?.type === 'active_call');
     return {
-      shouldShowAlert: !isSilent,
-      shouldPlaySound: !isSilent,
-      shouldSetBadge: false,
       shouldShowBanner: !isSilent,
       shouldShowList: true,
+      shouldPlaySound: !isSilent,
+      shouldSetBadge: false,
     };
   },
 });

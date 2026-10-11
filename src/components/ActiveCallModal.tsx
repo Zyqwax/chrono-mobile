@@ -5,6 +5,8 @@ import {
   AppState,
   Image,
   Modal,
+  PermissionsAndroid,
+  Platform,
   StyleSheet,
   Text,
   TouchableOpacity,
@@ -185,11 +187,24 @@ export const ActiveCallModal: React.FC = () => {
         setLivekitLoading(true);
         api
           .get(`/livekit/token/${activeCall.mediaRoom}`)
-          .then((res) => {
+          .then(async (res) => {
             const token = res.data?.token || null;
             const server = res.data?.serverUrl || null;
             setLivekitToken(token);
             setLivekitServer(server);
+
+            // Android için mikrofon ve gerekirse kamera iznini çalışma zamanında doğrula
+            if (Platform.OS === 'android') {
+              try {
+                const perms = [PermissionsAndroid.PERMISSIONS.RECORD_AUDIO];
+                if (activeCall.video || isVideoOn) {
+                  perms.push(PermissionsAndroid.PERMISSIONS.CAMERA);
+                }
+                await PermissionsAndroid.requestMultiple(perms);
+              } catch (permErr) {
+                console.warn('Mikrofon/kamera izin uyarısı:', permErr);
+              }
+            }
 
             // Gerçek WebRTC LiveKit odasına bağlan
             if (token && server) {

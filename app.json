@@ -73,7 +73,6 @@
       "expo-router",
       "expo-updates",
       "@livekit/react-native-expo-plugin",
-      "./plugins/withNotifeeForegroundService.js",
       [
         "@config-plugins/react-native-callkeep",
         {
