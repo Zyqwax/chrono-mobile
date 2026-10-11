@@ -1,13 +1,10 @@
-import React, { memo, useCallback, useEffect, useRef } from 'react';
+import React, { memo, useCallback } from 'react';
 import {
-  Animated,
-  Easing,
+  Platform,
+  Pressable,
   StyleSheet,
   Text,
-  Pressable,
   View,
-  Image,
-  Platform,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -22,8 +19,29 @@ interface TabConfig {
   iconActive: keyof typeof Ionicons.glyphMap;
   iconInactive: keyof typeof Ionicons.glyphMap;
   showUnread?: boolean;
-  isProfile?: boolean;
 }
+
+const TABS: Record<string, TabConfig> = {
+  index: {
+    name: 'index',
+    label: 'Sohbetler',
+    iconActive: 'chatbubble',
+    iconInactive: 'chatbubble-outline',
+    showUnread: true,
+  },
+  contacts: {
+    name: 'contacts',
+    label: 'Kişiler',
+    iconActive: 'people',
+    iconInactive: 'people-outline',
+  },
+  profile: {
+    name: 'profile',
+    label: 'Profil',
+    iconActive: 'person',
+    iconInactive: 'person-outline',
+  },
+};
 
 export interface ChronoTabBarProps {
   state: {
@@ -35,161 +53,15 @@ export interface ChronoTabBarProps {
     emit: (event: any) => any;
     navigate: (name: string) => void;
   };
-  insets?: {
-    top: number;
-    bottom: number;
-    left: number;
-    right: number;
-  };
 }
 
-// Modül seviyesinde sabit: her render'da yeniden oluşturulmaz
-const TABS: Record<string, TabConfig> = {
-  index: {
-    name: 'index',
-    label: 'Sohbetler',
-    iconActive: 'chatbubble-ellipses',
-    iconInactive: 'chatbubble-ellipses-outline',
-    showUnread: true,
-  },
-  contacts: {
-    name: 'contacts',
-    label: 'Kişiler',
-    iconActive: 'people',
-    iconInactive: 'people-outline',
-  },
-  settings: {
-    name: 'settings',
-    label: 'Ayarlar',
-    iconActive: 'settings',
-    iconInactive: 'settings-outline',
-  },
-  profile: {
-    name: 'profile',
-    label: 'Profil',
-    iconActive: 'person-circle',
-    iconInactive: 'person-circle-outline',
-    isProfile: true,
-  },
-};
-
-// Kısa, hafif ve native thread üzerinde çalışan hap animasyonu
-const PILL_ANIM_DURATION = 160;
-
-interface TabItemProps {
-  routeKey: string;
-  routeName: string;
-  isFocused: boolean;
-  badge?: number | string;
-  avatarUrl?: string | null;
-  avatarInitial: string;
-  navigation: ChronoTabBarProps['navigation'];
-}
-
-const TabItem = memo(function TabItem({
-  routeKey,
-  routeName,
-  isFocused,
-  badge,
-  avatarUrl,
-  avatarInitial,
+export const ChronoTabBar = memo(function ChronoTabBar({
+  state,
   navigation,
-}: TabItemProps) {
-  const config: TabConfig = TABS[routeName] || {
-    name: routeName,
-    label: routeName,
-    iconActive: 'ellipse',
-    iconInactive: 'ellipse-outline',
-  };
-
-  const progress = useRef(new Animated.Value(isFocused ? 1 : 0)).current;
-
-  useEffect(() => {
-    Animated.timing(progress, {
-      toValue: isFocused ? 1 : 0,
-      duration: PILL_ANIM_DURATION,
-      easing: Easing.out(Easing.quad),
-      useNativeDriver: true,
-    }).start();
-  }, [isFocused, progress]);
-
-  const onPress = useCallback(() => {
-    if (isFocused) return;
-    const event = navigation.emit({
-      type: 'tabPress',
-      target: routeKey,
-      canPreventDefault: true,
-    });
-    if (!event.defaultPrevented) {
-      navigation.navigate(routeName);
-    }
-  }, [isFocused, navigation, routeKey, routeName]);
-
-  const pillStyle = {
-    opacity: progress,
-    transform: [
-      {
-        scaleX: progress.interpolate({ inputRange: [0, 1], outputRange: [0.6, 1] }),
-      },
-    ],
-  };
-
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityState={isFocused ? { selected: true } : {}}
-      onPress={onPress}
-      style={({ pressed }) => [styles.tabItem, pressed && styles.tabItemPressed]}
-    >
-      {/* Sabit kavisli Chrono hap kapsülü (Asla köşeli hale gelmez) */}
-      <View style={styles.iconCapsule}>
-        <Animated.View style={[styles.activePillBackground, pillStyle]} />
-
-        {config.isProfile ? (
-          avatarUrl ? (
-            <Image
-              source={{ uri: avatarUrl }}
-              style={[styles.avatarThumb, isFocused && styles.avatarThumbActive]}
-            />
-          ) : (
-            <View style={[styles.avatarFallback, isFocused && styles.avatarFallbackActive]}>
-              <Text style={styles.avatarFallbackText}>{avatarInitial}</Text>
-            </View>
-          )
-        ) : (
-          <Ionicons
-            name={isFocused ? config.iconActive : config.iconInactive}
-            size={22}
-            color={isFocused ? colors.primaryLight : colors.textSecondary}
-          />
-        )}
-
-        {/* Okunmamış bildirim hap rozeti */}
-        {badge !== undefined && !isFocused && (
-          <View style={styles.badgeContainer}>
-            <Text style={styles.badgeText}>{badge}</Text>
-          </View>
-        )}
-      </View>
-
-      <Text
-        style={[styles.tabLabel, isFocused ? styles.tabLabelActive : styles.tabLabelInactive]}
-        numberOfLines={1}
-      >
-        {config.label}
-      </Text>
-    </Pressable>
-  );
-});
-
-const ChronoTabBarComponent: React.FC<ChronoTabBarProps> = ({ state, navigation }) => {
+  descriptors,
+}: ChronoTabBarProps) {
   const insets = useSafeAreaInsets();
 
-  // Sadece primitif değerlere abone ol → yalnızca gerçekten değiştiklerinde yeniden render
-  const avatarUrl = useChatStore((s) => s.currentUser?.avatarUrl ?? null);
-  const avatarInitial = useChatStore((s) =>
-    (s.currentUser?.displayName || s.currentUser?.username || 'U').slice(0, 1).toUpperCase(),
-  );
   const totalUnread = useChatStore((s) => {
     let sum = 0;
     for (const r of s.rooms) sum += r.unreadCount || 0;
@@ -198,153 +70,161 @@ const ChronoTabBarComponent: React.FC<ChronoTabBarProps> = ({ state, navigation 
 
   const unreadBadge = totalUnread > 0 ? (totalUnread > 99 ? '99+' : totalUnread) : undefined;
 
+  // Sadece tanımlı sekmeleri filtrele (settings vb. gizli sekmeler görünmesin)
+  const visibleRoutes = state.routes.filter((route) => {
+    const options = descriptors[route.key]?.options;
+    if (options?.href === null) return false;
+    return !!TABS[route.name];
+  });
+
   return (
     <View
-      style={[styles.container, { bottom: Math.max(insets.bottom, 12) }]}
-      pointerEvents="box-none"
+      style={[
+        styles.container,
+        {
+          paddingBottom: Math.max(insets.bottom, 10),
+          height: 62 + Math.max(insets.bottom, 10),
+        },
+      ]}
     >
-      <View style={styles.tabBar}>
-        {state.routes.map((route, index) => (
-          <TabItem
-            key={route.key}
-            routeKey={route.key}
-            routeName={route.name}
-            isFocused={state.index === index}
-            badge={TABS[route.name]?.showUnread ? unreadBadge : undefined}
-            avatarUrl={avatarUrl}
-            avatarInitial={avatarInitial}
-            navigation={navigation}
-          />
-        ))}
+      <View style={styles.tabRow}>
+        {visibleRoutes.map((route) => {
+          const isFocused = state.routes[state.index]?.name === route.name;
+          const config = TABS[route.name] || {
+            name: route.name,
+            label: route.name,
+            iconActive: 'ellipse',
+            iconInactive: 'ellipse-outline',
+          };
+
+          const onPress = () => {
+            if (isFocused) return;
+            const event = navigation.emit({
+              type: 'tabPress',
+              target: route.key,
+              canPreventDefault: true,
+            });
+            if (!event.defaultPrevented) {
+              navigation.navigate(route.name);
+            }
+          };
+
+          return (
+            <Pressable
+              key={route.key}
+              accessibilityRole="button"
+              accessibilityState={isFocused ? { selected: true } : {}}
+              onPress={onPress}
+              style={({ pressed }) => [
+                styles.tabItem,
+                pressed && { opacity: 0.75 },
+              ]}
+            >
+              {isFocused ? (
+                /* Aktif Sekme: İkon + Metin + 3 Dikey Nokta */
+                <View style={styles.activePill}>
+                  <Ionicons
+                    name={config.iconActive}
+                    size={22}
+                    color="#38BDF8"
+                    style={{ marginRight: 8 }}
+                  />
+                  <Text style={styles.activeLabel}>{config.label}</Text>
+                </View>
+              ) : (
+                /* Pasif Sekme: Sadece İkon */
+                <View style={styles.inactiveIconWrapper}>
+                  <Ionicons
+                    name={config.iconInactive}
+                    size={24}
+                    color="#8A93A8"
+                  />
+                  {config.showUnread && unreadBadge !== undefined && (
+                    <View style={styles.badge}>
+                      <Text style={styles.badgeText}>{unreadBadge}</Text>
+                    </View>
+                  )}
+                </View>
+              )}
+            </Pressable>
+          );
+        })}
       </View>
     </View>
   );
-};
-
-export const ChronoTabBar = memo(ChronoTabBarComponent);
+});
 
 const styles = StyleSheet.create({
   container: {
-    position: 'absolute',
-    left: 16,
-    right: 16,
-    alignItems: 'center',
+    backgroundColor: '#0B0F1A',
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255, 255, 255, 0.06)',
+    justifyContent: 'center',
     zIndex: 999,
   },
-  tabBar: {
+  tabRow: {
     flexDirection: 'row',
-    width: '100%',
-    height: 64,
-    backgroundColor: '#151E2B',
-    borderRadius: 32,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.08)',
     alignItems: 'center',
     justifyContent: 'space-around',
-    paddingHorizontal: 8,
-    overflow: 'hidden',
-    ...Platform.select({
-      ios: {
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 6 },
-        shadowOpacity: 0.45,
-        shadowRadius: 10,
-      },
-      android: {
-        elevation: 12,
-      },
-    }),
+    paddingHorizontal: 16,
+    height: 60,
   },
   tabItem: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 4,
+    height: 60,
   },
-  tabItemPressed: {
-    opacity: 0.7,
-  },
-  iconCapsule: {
-    width: 56,
-    height: 32,
-    borderRadius: 16,
+  activePill: {
+    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    position: 'relative',
-    overflow: 'hidden',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 20,
+    backgroundColor: 'rgba(37, 99, 235, 0.15)',
   },
-  activePillBackground: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    borderRadius: 16,
-    backgroundColor: '#1E3B5C', // Chrono aktif koyu mavi hap rengi
-    overflow: 'hidden',
-  },
-  tabLabel: {
-    fontSize: 11,
-    fontWeight: '500',
-    marginTop: 2,
+  activeLabel: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#38BDF8',
     letterSpacing: 0.2,
   },
-  tabLabelActive: {
-    color: colors.primaryLight,
-    fontWeight: '700',
+  dotsIndicator: {
+    flexDirection: 'column',
+    justifyContent: 'space-between',
+    height: 12,
+    marginLeft: 6,
+    paddingVertical: 1,
   },
-  tabLabelInactive: {
-    color: colors.textSecondary,
+  indicatorDot: {
+    width: 2.5,
+    height: 2.5,
+    borderRadius: 1.25,
+    backgroundColor: '#38BDF8',
   },
-  badgeContainer: {
-    position: 'absolute',
-    top: -2,
-    right: 4,
-    backgroundColor: colors.primary,
-    minWidth: 18,
-    height: 18,
-    borderRadius: 9,
+  inactiveIconWrapper: {
+    position: 'relative',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 4,
-    borderWidth: 1.5,
-    borderColor: '#151E2B',
-    overflow: 'hidden',
+    width: 44,
+    height: 44,
+  },
+  badge: {
+    position: 'absolute',
+    top: 2,
+    right: 2,
+    backgroundColor: colors.primary,
+    minWidth: 16,
+    height: 16,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 3,
   },
   badgeText: {
     color: '#FFFFFF',
-    fontSize: 10,
-    fontWeight: '700',
-  },
-  avatarThumb: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    borderWidth: 1.5,
-    borderColor: 'transparent',
-    overflow: 'hidden',
-  },
-  avatarThumbActive: {
-    borderColor: colors.primaryLight,
-  },
-  avatarFallback: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    backgroundColor: colors.surfaceActive,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1.5,
-    borderColor: 'transparent',
-    overflow: 'hidden',
-  },
-  avatarFallbackActive: {
-    backgroundColor: colors.primaryDark,
-    borderColor: colors.primaryLight,
-  },
-  avatarFallbackText: {
-    color: '#FFFFFF',
-    fontSize: 11,
+    fontSize: 9,
     fontWeight: '700',
   },
 });

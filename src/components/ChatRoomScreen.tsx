@@ -15,14 +15,16 @@ import {
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { GiftedChat, IMessage } from 'react-native-gifted-chat';
+import { GiftedChat, IMessage, Message as GiftedChatMessage } from 'react-native-gifted-chat';
 import { Message, Room } from '../types';
 import { useChatStore } from '../store/useChatStore';
 import { RoomInfoModal } from './RoomInfoModal';
 import { VoiceRoomSheet } from './VoiceRoomSheet';
+import { ChronoAvatar } from './ChronoAvatar';
 import { chronoTheme } from '../theme/colors';
 import { useShallow } from 'zustand/react/shallow';
-import { useTransitionReady } from '../hooks/useTransitionReady';
+
+const EMPTY_MESSAGES: Message[] = [];
 import { formatTime } from '../utils/format';
 
 const { colors } = chronoTheme;
@@ -60,12 +62,11 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({ room, onBack }) 
     };
   }, []);
 
-  // Sığ (shallow) seçici: yalnızca bu ekranın kullandığı alanlar değişince render olur
+  // Sığ (shallow) seçici: yalnızca bu ekranın kullandığı aksiyonlar ve profil değişince render olur
   const {
     currentUserId,
     currentUserName,
     currentUserAvatar,
-    messages,
     fetchMessages,
     sendMessage,
     editMessage,
@@ -81,7 +82,6 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({ room, onBack }) 
       currentUserId: s.currentUser?.id,
       currentUserName: s.currentUser?.displayName,
       currentUserAvatar: s.currentUser?.avatarUrl,
-      messages: s.messages,
       fetchMessages: s.fetchMessages,
       sendMessage: s.sendMessage,
       editMessage: s.editMessage,
@@ -95,8 +95,17 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({ room, onBack }) 
     })),
   );
 
-  // Geçiş animasyonu bitene kadar ağır mesaj listesini mount etme
-  const transitionReady = useTransitionReady(350);
+  // Bu odaya ait mesaj havuzu:
+  // Doğrudan oda anahtarına abone olur; yarış durumlarından (race condition) etkilenmez
+  const roomMsgs = useChatStore((s) => s.roomMessages[room.id]);
+  const activeMsgs = useChatStore((s) => s.messages);
+  const activeRoomId = useChatStore((s) => s.activeRoom?.id);
+
+  const messages = useMemo(() => {
+    if (roomMsgs && roomMsgs.length > 0) return roomMsgs;
+    if (activeRoomId === room.id && activeMsgs && activeMsgs.length > 0) return activeMsgs;
+    return roomMsgs || activeMsgs || EMPTY_MESSAGES;
+  }, [roomMsgs, activeMsgs, activeRoomId, room.id]);
 
   const isDirect = room.type === 'DIRECT';
   const chatTitle = isDirect
@@ -105,23 +114,33 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({ room, onBack }) 
 
   const isPeerOnline = isDirect && room.peer?.status === 'ONLINE';
 
-  const messagesCountRef = useRef(messages.length);
-  messagesCountRef.current = messages.length;
-
   const loadChat = useCallback(
     async (isRetry = false) => {
-      setLoading(true);
+      // Eğer önbellekte zaten bu odaya ait mesajlar varsa tam ekran spinner açma (arka plan sessiz yenilemesi)
+      const cachedCount = (useChatStore.getState().roomMessages[room.id]?.length ?? 0);
+      if (cachedCount === 0) {
+        setLoading(true);
+      }
       if (isRetry) setLoadError(false);
-      const success = await fetchMessages(room.id);
-      setLoading(false);
-      if (!success && messagesCountRef.current === 0) {
-        setLoadError(true);
+
+      try {
+        const success = await fetchMessages(room.id);
+        const latestCount = (useChatStore.getState().roomMessages[room.id]?.length ?? 0);
+        if (!success && latestCount === 0) {
+          setLoadError(true);
+        }
+      } catch {
+        const latestCount = (useChatStore.getState().roomMessages[room.id]?.length ?? 0);
+        if (latestCount === 0) {
+          setLoadError(true);
+        }
+      } finally {
+        setLoading(false);
       }
     },
     [fetchMessages, room.id],
   );
 
-  // Not: okundu bildirimi setActiveRoom içinde zaten yapılıyor
   useEffect(() => {
     loadChat();
   }, [loadChat]);
@@ -276,102 +295,79 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({ room, onBack }) 
         {/* Telegram Style Chat Header                                    */}
         {/* ------------------------------------------------------------- */}
         <View style={styles.header}>
-        <TouchableOpacity onPress={onBack} style={styles.backBtn} activeOpacity={0.7}>
-          <Ionicons name="arrow-back" size={24} color={colors.textPrimary} />
-        </TouchableOpacity>
-
-        {/* Room Header Info (Clickable for Room / Profile Details) */}
-        <TouchableOpacity
-          style={styles.roomHeaderInfo}
-          onPress={() => setInfoModalVisible(true)}
-          activeOpacity={0.8}
-        >
-          {(isDirect ? room.peer?.avatarUrl : room.iconUrl) ? (
-            <View style={{ position: 'relative', marginRight: 10 }}>
-              <Image
-                source={{ uri: (isDirect ? room.peer?.avatarUrl : room.iconUrl)! }}
-                style={{ width: 40, height: 40, borderRadius: 20 }}
-              />
-              {isVoiceActiveInThisRoom && <View style={styles.headerVoiceDot} />}
-            </View>
-          ) : (
-            <View style={styles.avatar}>
-              <Text style={styles.avatarText}>
-                {chatTitle.charAt(0).toUpperCase()}
-              </Text>
-              {isVoiceActiveInThisRoom && <View style={styles.headerVoiceDot} />}
-            </View>
-          )}
-
-          <View style={styles.headerTitles}>
-            <Text style={styles.roomName} numberOfLines={1}>
-              {chatTitle}
-            </Text>
-            <Text style={styles.roomStatus} numberOfLines={1}>
-              {typingUsers.length > 0 ? (
-                <Text style={{ color: colors.primaryLight }}>
-                  {typingUsers.map((u) => u.displayName).join(', ')} yazıyor...
-                </Text>
-              ) : isDirect ? (
-                isPeerOnline ? (
-                  <Text style={{ color: '#10B981' }}>çevrimiçi</Text>
-                ) : (
-                  <Text style={{ color: colors.textSecondary }}>son görülme yakınlarda</Text>
-                )
-              ) : isVoiceActiveInThisRoom ? (
-                <Text style={{ color: colors.primaryLight }}>🎙️ Canlı Sesli Sohbet</Text>
-              ) : (
-                `${room.membersCount || room.members?.length || 1} üye`
-              )}
-            </Text>
-          </View>
-        </TouchableOpacity>
-
-        {/* Header Actions: DM ise Arama; Oda ise Sesli Sohbet */}
-        <View style={styles.headerActions}>
-          {isDirect ? (
-            <>
-              <TouchableOpacity
-                style={styles.actionIconBtn}
-                onPress={() => handleStartCall(false)}
-                activeOpacity={0.7}
-              >
-                <Ionicons name="call-outline" size={21} color={colors.textPrimary} />
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.actionIconBtn}
-                onPress={() => handleStartCall(true)}
-                activeOpacity={0.7}
-              >
-                <Ionicons name="videocam-outline" size={22} color={colors.textPrimary} />
-              </TouchableOpacity>
-            </>
-          ) : (
-            <TouchableOpacity
-              style={[
-                styles.actionIconBtn,
-                isVoiceActiveInThisRoom && styles.actionIconBtnActive,
-              ]}
-              onPress={handleVoiceJoin}
-              activeOpacity={0.7}
-            >
-              <Ionicons
-                name={isVoiceActiveInThisRoom ? 'volume-high' : 'mic-outline'}
-                size={22}
-                color={isVoiceActiveInThisRoom ? colors.primaryLight : colors.textPrimary}
-              />
-            </TouchableOpacity>
-          )}
-
-          <TouchableOpacity
-            style={styles.actionIconBtn}
-            onPress={() => setInfoModalVisible(true)}
-            activeOpacity={0.7}
-          >
-            <Ionicons name="ellipsis-vertical" size={20} color={colors.textPrimary} />
+          <TouchableOpacity onPress={onBack} style={styles.backBtn} activeOpacity={0.7}>
+            <Ionicons name="chevron-back" size={24} color={colors.textPrimary} />
           </TouchableOpacity>
+
+          {/* Room / Peer Info */}
+          <TouchableOpacity
+            style={styles.roomHeaderInfo}
+            onPress={() => setInfoModalVisible(true)}
+            activeOpacity={0.8}
+          >
+            <ChronoAvatar
+              size={38}
+              uri={isDirect ? room.peer?.avatarUrl : room.iconUrl}
+              name={chatTitle}
+              emoji={!isDirect && (chatTitle.startsWith('🔥') || true) ? (chatTitle.match(/^(\p{Emoji})/u)?.[0] || '🔥') : undefined}
+              online={isDirect && isPeerOnline}
+              style={{ marginRight: 10 }}
+            />
+
+            <View style={styles.headerTitles}>
+              <Text style={styles.roomName} numberOfLines={1}>
+                {!isDirect && chatTitle.match(/^(\p{Emoji})/u)
+                  ? chatTitle.replace(/^(\p{Emoji})/u, '').trim()
+                  : chatTitle}
+              </Text>
+              <Text style={styles.roomStatus} numberOfLines={1}>
+                {typingUsers.length > 0 ? (
+                  <Text style={{ color: colors.primaryLight }}>
+                    {typingUsers.map((u) => u.displayName).join(', ')} yazıyor...
+                  </Text>
+                ) : isDirect ? (
+                  isPeerOnline ? (
+                    <Text style={{ color: '#10B981' }}>çevrimiçi</Text>
+                  ) : (
+                    <Text style={{ color: '#38BDF8' }}>son görülme yakınlarda</Text>
+                  )
+                ) : (
+                  `${room.membersCount || room.members?.length || 2} üye · ${activeVoiceCount > 0 ? `${activeVoiceCount} çevrimiçi` : '1 çevrimiçi'}`
+                )}
+              </Text>
+            </View>
+          </TouchableOpacity>
+
+          {/* Header Actions: DM -> Sesli & Görüntülü Arama; Oda -> 3 Nokta */}
+          <View style={styles.headerActions}>
+            {isDirect ? (
+              <>
+                <TouchableOpacity
+                  style={styles.actionIconBtn}
+                  onPress={() => handleStartCall(false)}
+                  activeOpacity={0.7}
+                >
+                  <Ionicons name="call-outline" size={21} color={colors.textPrimary} />
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.actionIconBtn}
+                  onPress={() => handleStartCall(true)}
+                  activeOpacity={0.7}
+                >
+                  <Ionicons name="videocam-outline" size={22} color={colors.textPrimary} />
+                </TouchableOpacity>
+              </>
+            ) : (
+              <TouchableOpacity
+                style={styles.actionIconBtn}
+                onPress={() => setInfoModalVisible(true)}
+                activeOpacity={0.7}
+              >
+                <Ionicons name="ellipsis-vertical" size={20} color={colors.textPrimary} />
+              </TouchableOpacity>
+            )}
+          </View>
         </View>
-      </View>
 
       {/* ------------------------------------------------------------- */}
       {/* Live Voice Chat Header Banner (Sohbet Odaları için)           */}
@@ -436,7 +432,6 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({ room, onBack }) 
           </View>
         ) : (
           <MessageFeed
-            ready={transitionReady}
             messages={giftedMessages}
             currentUserId={currentUserId || ''}
             currentUserName={currentUserName || 'Kullanıcı'}
@@ -475,7 +470,33 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({ room, onBack }) 
         )}
 
         {/* ------------------------------------------------------------- */}
-        {/* Telegram Input Bar                                            */}
+        {/* Oda İçin Alt Sesli Sohbet Kartı (Page 5 Tasarımı)              */}
+        {/* ------------------------------------------------------------- */}
+        {!isDirect && (
+          <View style={styles.dockedVoiceCard}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.dockedVoiceTitle}>Sesli sohbet</Text>
+              <Text style={styles.dockedVoiceSubtitle}>
+                {activeVoiceCount > 0
+                  ? `${activeVoiceCount} kişi odada konuşuyor`
+                  : 'Şu an kimse yok'}
+              </Text>
+            </View>
+            <TouchableOpacity
+              style={styles.dockedVoiceBtn}
+              onPress={handleVoiceJoin}
+              activeOpacity={0.85}
+            >
+              <Ionicons name="mic" size={15} color="#FFFFFF" style={{ marginRight: 5 }} />
+              <Text style={styles.dockedVoiceBtnText}>
+                {isMeInVoice ? 'Yönet' : activeVoiceCount > 0 ? 'Katıl' : 'Başlat'}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {/* ------------------------------------------------------------- */}
+        {/* Bottom Input Bar                                              */}
         {/* ------------------------------------------------------------- */}
         <View
           style={[
@@ -483,38 +504,35 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({ room, onBack }) 
             { paddingBottom: isKeyboardVisible ? 8 : Math.max(insets.bottom, 8) },
           ]}
         >
-          <View style={styles.inputBox}>
-            <TouchableOpacity style={styles.inputIconBtn} activeOpacity={0.7}>
-              <Ionicons name="happy-outline" size={22} color={colors.textSecondary} />
-            </TouchableOpacity>
+          <TouchableOpacity style={styles.mediaIconBtn} activeOpacity={0.7}>
+            <Ionicons name="camera-outline" size={22} color="#8A93A8" />
+          </TouchableOpacity>
 
+          <View style={styles.inputBox}>
             <TextInput
               style={styles.textInput}
-              placeholder="Mesaj yazın..."
-              placeholderTextColor={colors.inputPlaceholder}
+              placeholder="Mesaj yaz"
+              placeholderTextColor="#64748B"
               value={inputText}
               onChangeText={handleInputChange}
               multiline
             />
 
-            <TouchableOpacity style={styles.inputIconBtn} activeOpacity={0.7}>
-              <Ionicons name="attach-outline" size={22} color={colors.textSecondary} />
+            <TouchableOpacity style={styles.attachBtn} activeOpacity={0.7}>
+              <Ionicons name="attach" size={22} color="#8A93A8" />
             </TouchableOpacity>
           </View>
 
-          {/* Dinamik Gönder Butonu */}
+          {/* Dinamik Gönder / Mikrofon Butonu */}
           <TouchableOpacity
-            style={[
-              styles.actionSendBtn,
-              inputText.trim() ? styles.actionSendBtnActive : styles.actionMicBtn,
-            ]}
+            style={styles.actionSendBtn}
             onPress={inputText.trim() ? handleSend : (!isDirect ? handleVoiceJoin : undefined)}
-            activeOpacity={0.8}
+            activeOpacity={0.85}
           >
             <Ionicons
               name={inputText.trim() ? 'send' : 'mic'}
-              size={19}
-              color="#ffffff"
+              size={18}
+              color="#FFFFFF"
             />
           </TouchableOpacity>
         </View>
@@ -542,8 +560,6 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({ room, onBack }) 
 // ---------------------------------------------------------------------------
 // Mesaj beslemesi (memo): input'a yazarken veya klavye açılırken yeniden render olmaz
 // ---------------------------------------------------------------------------
-const FEED_FADE_DURATION = 140;
-
 const formatCallDuration = (secs: number) => {
   if (secs <= 0) return '';
   const mins = Math.floor(secs / 60);
@@ -554,12 +570,7 @@ const formatCallDuration = (secs: number) => {
   return `${remainingSecs} sn`;
 };
 
-const renderFeedLoading = () => (
-  <View style={styles.giftedLoaderContainer}>
-    <ActivityIndicator size="large" color={colors.primaryLight} />
-    <Text style={styles.giftedLoaderText}>Mesajlar yükleniyor...</Text>
-  </View>
-);
+const renderFeedLoading = () => null;
 
 const renderChatEmpty = () => (
   <View style={styles.emptyFeed}>
@@ -601,69 +612,30 @@ const CallBubble = memo(function CallBubble({ item, isMe, isDirect, onCallPress 
   }
 
   const { video, status, duration } = callData;
-  const isMissed = !isMe && (status === 'missed' || status === 'declined' || status === 'busy');
-  const isCancelled = isMe && (status === 'missed' || status === 'cancelled');
-  const isDeclined = isMe && status === 'declined';
-  const isEnded = status === 'ended';
+  const isIncoming = !isMe;
+  const durStr = duration > 0 ? formatCallDuration(duration) : '';
+  const timeStr = formatTime(item.createdAt);
 
-  let title = 'Sesli Arama';
-  let sub = formatTime(item.createdAt);
-  let iconName: any = video ? 'videocam' : 'call';
-  let badgeColor = '#10B981';
-  let badgeBg = 'rgba(16, 185, 129, 0.15)';
+  const label = isIncoming
+    ? (video ? 'Gelen görüntülü arama' : 'Gelen sesli arama')
+    : (video ? 'Giden görüntülü arama' : 'Giden sesli arama');
 
-  if (isMissed) {
-    title = video ? 'Cevapsız Görüntülü Arama' : 'Cevapsız Arama';
-    iconName = video ? 'videocam-off' : 'call-outline';
-    badgeColor = '#EF4444';
-    badgeBg = 'rgba(239, 68, 68, 0.18)';
-  } else if (isCancelled) {
-    title = video ? 'İptal Edilen Görüntülü Arama' : 'İptal Edilen Arama';
-    iconName = video ? 'videocam' : 'call';
-    badgeColor = '#94A3B8';
-    badgeBg = 'rgba(148, 163, 184, 0.15)';
-  } else if (isDeclined) {
-    title = video ? 'Reddedilen Görüntülü Arama' : 'Reddedilen Arama';
-    iconName = video ? 'close-circle' : 'call';
-    badgeColor = '#F59E0B';
-    badgeBg = 'rgba(245, 158, 11, 0.18)';
-  } else if (isEnded) {
-    title = isMe
-      ? (video ? 'Giden Görüntülü Arama' : 'Giden Sesli Arama')
-      : (video ? 'Gelen Görüntülü Arama' : 'Gelen Sesli Arama');
-    const durStr = formatCallDuration(duration);
-    if (durStr) {
-      sub = `${durStr} · ${sub}`;
-    }
-  }
+  const text = durStr ? `${label} · ${durStr} · ${timeStr}` : `${label} · ${timeStr}`;
 
   return (
     <View style={styles.callMessageCenterContainer}>
       <TouchableOpacity
-        style={styles.callBubbleCard}
+        style={styles.callBubblePill}
         onPress={() => isDirect && onCallPress(video)}
         activeOpacity={0.8}
       >
-        <View style={[styles.callBadgeCircle, { backgroundColor: badgeBg }]}>
-          <Ionicons name={iconName} size={20} color={badgeColor} />
-        </View>
-
-        <View style={styles.callTextColumn}>
-          <Text style={[styles.callTitleText, isMissed && { color: '#F87171' }]} numberOfLines={1}>
-            {title}
-          </Text>
-          <Text style={styles.callSubtitleText}>{sub}</Text>
-        </View>
-
-        {isDirect && (
-          <TouchableOpacity
-            style={styles.callActionIconBtn}
-            onPress={() => onCallPress(video)}
-            activeOpacity={0.7}
-          >
-            <Ionicons name={video ? 'videocam' : 'call'} size={16} color={colors.primaryLight} />
-          </TouchableOpacity>
-        )}
+        <Ionicons
+          name={video ? 'videocam-outline' : 'call-outline'}
+          size={16}
+          color={video ? '#38BDF8' : '#10B981'}
+          style={{ marginRight: 8 }}
+        />
+        <Text style={styles.callPillText}>{text}</Text>
       </TouchableOpacity>
     </View>
   );
@@ -738,7 +710,6 @@ const TextBubble = memo(function TextBubble({
 });
 
 interface MessageFeedProps {
-  ready: boolean;
   messages: IMessage[];
   currentUserId: string;
   currentUserName: string;
@@ -751,7 +722,6 @@ interface MessageFeedProps {
 }
 
 const MessageFeed = memo(function MessageFeed({
-  ready,
   messages,
   currentUserId,
   currentUserName,
@@ -762,22 +732,18 @@ const MessageFeed = memo(function MessageFeed({
   onLongPressMessage,
   onCallPress,
 }: MessageFeedProps) {
-  // Geçişten sonra kısa ve native-driver tabanlı bir fade-in (JS thread'i yormaz)
-  const opacity = useRef(new Animated.Value(0)).current;
-
-  useEffect(() => {
-    if (!ready) return;
-    Animated.timing(opacity, {
-      toValue: 1,
-      duration: FEED_FADE_DURATION,
-      useNativeDriver: true,
-    }).start();
-  }, [ready, opacity]);
-
   const user = useMemo(
     () => ({ _id: currentUserId, name: currentUserName, avatar: currentUserAvatar }),
     [currentUserId, currentUserName, currentUserAvatar],
   );
+
+  // React 19 Uyumlu Mesaj Renderlayıcı:
+  // GiftedChat'in dahili <Message {...props} /> içinde key yaymasını önler ve key'i doğrudan JSX elemanına aktarır.
+  const renderMessage = useCallback((props: any) => {
+    const { key, ...restProps } = props;
+    const messageKey = key || props.currentMessage?._id || `msg-${Math.random()}`;
+    return <GiftedChatMessage key={messageKey} {...restProps} />;
+  }, []);
 
   const renderBubble = useCallback(
     (bubbleProps: any) => {
@@ -815,13 +781,8 @@ const MessageFeed = memo(function MessageFeed({
     [currentUserId, isDirect, othersRead, onLongPressMessage, onCallPress],
   );
 
-  if (!ready) {
-    // Geçiş sırasında hafif bir yer tutucu: animasyon anında başlar
-    return <View style={styles.messagesList} />;
-  }
-
   return (
-    <Animated.View style={[styles.feedFade, { opacity }]}>
+    <View style={styles.feedFade}>
       <GiftedChat
         messages={messages}
         user={user}
@@ -829,6 +790,7 @@ const MessageFeed = memo(function MessageFeed({
         isLoadingEarlier={loading}
         onLoadEarlier={noop}
         renderLoading={renderFeedLoading}
+        renderMessage={renderMessage}
         renderBubble={renderBubble}
         renderChatEmpty={renderChatEmpty}
         renderInputToolbar={renderNoInputToolbar}
@@ -836,7 +798,7 @@ const MessageFeed = memo(function MessageFeed({
         messagesContainerStyle={styles.messagesList}
         listViewProps={FEED_LIST_PROPS}
       />
-    </Animated.View>
+    </View>
   );
 });
 
@@ -1157,54 +1119,85 @@ const styles = StyleSheet.create({
     alignItems: 'flex-end',
     paddingHorizontal: 8,
     paddingTop: 8,
-    backgroundColor: colors.surface,
+    backgroundColor: '#0B0F1A',
     borderTopWidth: 1,
-    borderTopColor: colors.border,
+    borderTopColor: 'rgba(255, 255, 255, 0.06)',
     gap: 8,
+  },
+  mediaIconBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   inputBox: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: colors.inputBackground,
+    backgroundColor: '#111827',
     borderRadius: 22,
-    paddingHorizontal: 8,
+    paddingHorizontal: 12,
     minHeight: 44,
     maxHeight: 120,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
   },
-  inputIconBtn: {
+  attachBtn: {
     padding: 6,
     justifyContent: 'center',
     alignItems: 'center',
   },
   textInput: {
     flex: 1,
-    color: colors.textPrimary,
+    color: '#FFFFFF',
     fontSize: 15,
-    paddingHorizontal: 8,
+    paddingHorizontal: 4,
     paddingVertical: 8,
   },
   actionSendBtn: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: '#2563EB',
     justifyContent: 'center',
     alignItems: 'center',
-    shadowColor: colors.primary,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.35,
-    shadowRadius: 4,
-    elevation: 3,
   },
-  actionSendBtnActive: {
-    backgroundColor: colors.primary,
-  },
-  actionMicBtn: {
-    backgroundColor: colors.surfaceElevated,
+  dockedVoiceCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#111827',
+    borderRadius: 20,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    marginHorizontal: 12,
+    marginBottom: 8,
     borderWidth: 1,
-    borderColor: colors.borderLight,
+    borderColor: 'rgba(255, 255, 255, 0.06)',
+  },
+  dockedVoiceTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#FFFFFF',
+    marginBottom: 2,
+  },
+  dockedVoiceSubtitle: {
+    fontSize: 12,
+    color: '#8A93A8',
+  },
+  dockedVoiceBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#2563EB',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+  },
+  dockedVoiceBtnText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '700',
   },
   giftedLoaderContainer: {
     flex: 1,
@@ -1221,54 +1214,22 @@ const styles = StyleSheet.create({
   callMessageCenterContainer: {
     alignSelf: 'center',
     marginVertical: 6,
-    width: '92%',
-    maxWidth: 340,
   },
-  callBubbleCard: {
+  callBubblePill: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#151D30',
+    backgroundColor: '#111827',
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: 18,
     borderWidth: 1,
-    borderColor: '#222F4C',
-    borderRadius: 16,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    gap: 12,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.25,
-    shadowRadius: 4,
-    elevation: 2,
+    borderColor: 'rgba(255, 255, 255, 0.06)',
+    alignSelf: 'center',
   },
-  callBadgeCircle: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  callTextColumn: {
-    flex: 1,
-  },
-  callTitleText: {
-    color: '#F1F5F9',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  callSubtitleText: {
-    color: '#94A3B8',
+  callPillText: {
+    color: '#CBD5E1',
     fontSize: 12,
-    marginTop: 2,
-  },
-  callActionIconBtn: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    backgroundColor: 'rgba(56, 189, 248, 0.12)',
-    borderWidth: 1,
-    borderColor: 'rgba(56, 189, 248, 0.25)',
-    justifyContent: 'center',
-    alignItems: 'center',
+    fontWeight: '500',
   },
   retryBtn: {
     flexDirection: 'row',

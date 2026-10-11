@@ -19,6 +19,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Room } from '../types';
 import { useChatStore } from '../store/useChatStore';
 import { CreateRoomModal } from './CreateRoomModal';
+import { ChronoAvatar } from './ChronoAvatar';
 import { chronoTheme } from '../theme/colors';
 import { api } from '../services/api';
 import { useShallow } from 'zustand/react/shallow';
@@ -182,6 +183,14 @@ export const RoomsListScreen: React.FC<RoomsListScreenProps> = ({
     });
   }, [rooms, activeTab, searchQuery]);
 
+  const liveVoiceRoom = useMemo(() => {
+    return rooms.find(
+      (r) =>
+        r.type !== 'DIRECT' &&
+        ((roomVoiceStates?.[r.id]?.count || 0) > 0 || activeVoiceRoomId === r.id),
+    );
+  }, [rooms, roomVoiceStates, activeVoiceRoomId]);
+
   return (
     <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
       {/* ------------------------------------------------------------- */}
@@ -213,43 +222,43 @@ export const RoomsListScreen: React.FC<RoomsListScreenProps> = ({
       )}
 
       {/* ------------------------------------------------------------- */}
-      {/* Telegram Style Header (Chrono + Seçenekler)                    */}
+      {/* Chrono Brand Header                                           */}
       {/* ------------------------------------------------------------- */}
       <View style={styles.topBar}>
-        <Text style={styles.headerTitle}>Chrono</Text>
-
-        <TouchableOpacity
-          style={styles.moreBtn}
-          onPress={() => setMoreMenuVisible(true)}
-          activeOpacity={0.7}
-        >
-          <Ionicons name="ellipsis-vertical" size={22} color={colors.textPrimary} />
-        </TouchableOpacity>
+        <View style={styles.brandRow}>
+          <View style={styles.chronoLogoMark}>
+            <View style={styles.chronoLogoArc} />
+            <View style={styles.chronoDotTop} />
+            <View style={styles.chronoDotMid} />
+            <View style={styles.chronoDotBot} />
+          </View>
+          <Text style={styles.headerTitle}>Chrono</Text>
+        </View>
       </View>
 
       {/* ------------------------------------------------------------- */}
-      {/* Telegram Style Search Bar Pill                                 */}
+      {/* Search Bar Pill                                               */}
       {/* ------------------------------------------------------------- */}
       <View style={styles.searchSection}>
         <View style={styles.searchBar}>
-          <Ionicons name="search" size={18} color="#6E7F91" style={{ marginRight: 8 }} />
+          <Ionicons name="search" size={18} color="#64748B" style={{ marginRight: 10 }} />
           <TextInput
             style={styles.searchInput}
-            placeholder="Sohbetleri veya kişileri ara..."
-            placeholderTextColor="#6E7F91"
+            placeholder="Sohbet veya kişi ara"
+            placeholderTextColor="#64748B"
             value={searchQuery}
             onChangeText={setSearchQuery}
           />
           {searchQuery.length > 0 && (
             <TouchableOpacity onPress={() => setSearchQuery('')}>
-              <Ionicons name="close-circle" size={18} color="#6E7F91" />
+              <Ionicons name="close-circle" size={18} color="#64748B" />
             </TouchableOpacity>
           )}
         </View>
       </View>
 
       {/* ------------------------------------------------------------- */}
-      {/* Telegram Style Tabs: Tümü · Kişisel · Sohbet Odaları          */}
+      {/* Filter Tabs: Tümü · Kişisel · Odalar                          */}
       {/* ------------------------------------------------------------- */}
       <View style={styles.tabsContainer}>
         <TouchableOpacity
@@ -278,7 +287,7 @@ export const RoomsListScreen: React.FC<RoomsListScreenProps> = ({
           activeOpacity={0.8}
         >
           <Text style={[styles.tabText, activeTab === 'ROOMS' && styles.tabTextActive]}>
-            Sohbet Odaları
+            Odalar
           </Text>
         </TouchableOpacity>
       </View>
@@ -300,6 +309,36 @@ export const RoomsListScreen: React.FC<RoomsListScreenProps> = ({
           styles.listContent,
           filteredRooms.length === 0 && styles.emptyListContainer,
         ]}
+        ListHeaderComponent={
+          liveVoiceRoom ? (
+            <View style={styles.liveVoiceCard}>
+              <View style={styles.liveVoiceCardLeft}>
+                <View style={styles.liveDotIndicator} />
+                <ChronoAvatar
+                  size={38}
+                  name={liveVoiceRoom.name || 'Oda'}
+                  emoji={liveVoiceRoom.name?.startsWith('🔥') ? '🔥' : undefined}
+                  uri={liveVoiceRoom.iconUrl}
+                />
+                <View style={{ marginLeft: 10, flex: 1 }}>
+                  <Text style={styles.liveVoiceTitle} numberOfLines={1}>
+                    {liveVoiceRoom.name}
+                  </Text>
+                  <Text style={styles.liveVoiceSubtitle}>
+                    Canlı sesli sohbet · {roomVoiceStates?.[liveVoiceRoom.id]?.count || 2} kişi
+                  </Text>
+                </View>
+              </View>
+              <TouchableOpacity
+                style={styles.liveJoinBtn}
+                onPress={() => onSelectRoom(liveVoiceRoom)}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.liveJoinBtnText}>Katıl</Text>
+              </TouchableOpacity>
+            </View>
+          ) : null
+        }
         renderItem={renderItem}
         getItemLayout={getRoomItemLayout}
         initialNumToRender={12}
@@ -325,14 +364,15 @@ export const RoomsListScreen: React.FC<RoomsListScreenProps> = ({
       />
 
       {/* ------------------------------------------------------------- */}
-      {/* Telegram Floating Action Button (FAB - Kalem İkonu)           */}
+      {/* Floating Action Button (+ Yeni Pill)                          */}
       {/* ------------------------------------------------------------- */}
       <TouchableOpacity
         style={styles.fab}
         onPress={() => setMoreMenuVisible(true)}
         activeOpacity={0.85}
       >
-        <Ionicons name="pencil" size={24} color="#ffffff" />
+        <Ionicons name="add" size={20} color="#FFFFFF" style={{ marginRight: 4 }} />
+        <Text style={styles.fabText}>Yeni</Text>
       </TouchableOpacity>
 
       {/* ------------------------------------------------------------- */}
@@ -624,41 +664,16 @@ const RoomItem = memo(function RoomItem({
       onLongPress={handleLongPress}
       activeOpacity={0.65}
     >
-      {/* Avatar */}
-      <View style={styles.avatarWrapper}>
-        {(isDirect ? item.peer?.avatarUrl : item.iconUrl) ? (
-          <Image
-            source={{ uri: (isDirect ? item.peer?.avatarUrl : item.iconUrl)! }}
-            style={styles.avatarImage}
-            fadeDuration={0}
-          />
-        ) : (
-          <View
-            style={[
-              styles.avatar,
-              {
-                backgroundColor: isDirect
-                  ? '#0284C7'
-                  : chatName.charCodeAt(0) % 2 === 0
-                    ? colors.primary
-                    : '#7C3AED',
-              },
-            ]}
-          >
-            <Text style={styles.avatarText}>{chatName.charAt(0).toUpperCase()}</Text>
-          </View>
-        )}
-
-        {/* DM Çevrim içi yeşil noktası */}
-        {isPeerOnline && <View style={styles.onlineBadge} />}
-
-        {/* Sohbet Odası sesli yayın ikonu */}
-        {!isDirect && isLiveVoice && (
-          <View style={styles.liveVoiceBadge}>
-            <Ionicons name="mic" size={11} color="#ffffff" />
-          </View>
-        )}
-      </View>
+      {/* Chrono Avatar */}
+      <ChronoAvatar
+        size={48}
+        uri={isDirect ? item.peer?.avatarUrl : item.iconUrl}
+        name={chatName}
+        emoji={!isDirect && item.name?.startsWith('🔥') ? '🔥' : undefined}
+        online={isPeerOnline}
+        badge={!isDirect && isLiveVoice ? 'mic' : 'none'}
+        style={{ marginRight: 14 }}
+      />
 
       {/* Sohbet Bilgileri */}
       <View style={styles.roomDetails}>
@@ -990,21 +1005,119 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: '800',
   },
+  brandRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  chronoLogoMark: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    position: 'relative',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  chronoLogoArc: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    borderWidth: 2.5,
+    borderColor: '#2563EB',
+  },
+  chronoDotTop: {
+    position: 'absolute',
+    top: 5,
+    right: 1,
+    width: 3.5,
+    height: 3.5,
+    borderRadius: 1.75,
+    backgroundColor: '#38BDF8',
+  },
+  chronoDotMid: {
+    position: 'absolute',
+    top: 12,
+    right: -1,
+    width: 4,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: '#38BDF8',
+  },
+  chronoDotBot: {
+    position: 'absolute',
+    bottom: 5,
+    right: 1,
+    width: 3.5,
+    height: 3.5,
+    borderRadius: 1.75,
+    backgroundColor: '#38BDF8',
+  },
+  liveVoiceCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#111827',
+    borderRadius: 16,
+    padding: 12,
+    marginHorizontal: 16,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(56, 189, 248, 0.15)',
+  },
+  liveVoiceCardLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  liveDotIndicator: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#10B981',
+    marginRight: 10,
+  },
+  liveVoiceTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#FFFFFF',
+    marginBottom: 2,
+  },
+  liveVoiceSubtitle: {
+    fontSize: 12,
+    color: '#38BDF8',
+  },
+  liveJoinBtn: {
+    backgroundColor: '#2563EB',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 18,
+  },
+  liveJoinBtnText: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+    fontSize: 13,
+  },
   fab: {
     position: 'absolute',
     right: 18,
-    bottom: 90,
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: colors.primary,
-    justifyContent: 'center',
+    bottom: 18,
+    flexDirection: 'row',
     alignItems: 'center',
+    backgroundColor: colors.primary,
+    paddingHorizontal: 18,
+    paddingVertical: 12,
+    borderRadius: 24,
     elevation: 8,
     shadowColor: colors.primary,
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.45,
     shadowRadius: 8,
+    zIndex: 99,
+  },
+  fabText: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: '700',
   },
   menuOverlay: {
     flex: 1,

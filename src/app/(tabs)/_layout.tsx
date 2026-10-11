@@ -40,7 +40,7 @@ export default function TabLayout() {
       <Tabs.Screen
         name="settings"
         options={{
-          title: 'Ayarlar',
+          href: null,
         }}
       />
       <Tabs.Screen

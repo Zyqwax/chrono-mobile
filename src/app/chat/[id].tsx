@@ -27,24 +27,30 @@ export default function ChatDetailRoute() {
   const hasRoom = !!room;
 
   useEffect(() => {
-    if (!hasRoom && id) {
+    if (!id) return;
+    const store = useChatStore.getState();
+    const existing =
+      store.rooms.find((r) => r.id === id) ||
+      (store.activeRoom?.id === id ? store.activeRoom : null);
+
+    if (existing) {
+      if (store.activeRoom?.id !== id) {
+        store.setActiveRoom(existing);
+      }
+    } else {
       setLoading(true);
-      useChatStore
-        .getState()
-        .fetchRooms()
+      store
+        .fetchRoomById(id)
+        .then((fetched) => {
+          if (fetched) {
+            store.setActiveRoom(fetched);
+          } else {
+            return store.fetchRooms();
+          }
+        })
         .finally(() => setLoading(false));
     }
-  }, [id, hasRoom]);
-
-  // Bildirim / deep link ile gelindiğinde aktif odayı ayarla
-  useEffect(() => {
-    if (!hasRoom || !id) return;
-    const { activeRoom, rooms, setActiveRoom } = useChatStore.getState();
-    if (activeRoom?.id !== id) {
-      const target = rooms.find((r) => r.id === id);
-      if (target) setActiveRoom(target);
-    }
-  }, [id, hasRoom]);
+  }, [id]);
 
   // Ekrandan çıkarken aktif odayı temizle (hook'lar koşullu return'den önce olmalı)
   useEffect(() => {

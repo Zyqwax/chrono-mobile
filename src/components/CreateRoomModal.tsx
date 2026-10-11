@@ -2,7 +2,6 @@ import React, { useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
-  Image,
   Keyboard,
   KeyboardAvoidingView,
   Modal,
@@ -17,12 +16,8 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import * as ImagePicker from 'expo-image-picker';
 import { api } from '../services/api';
 import { useChatStore } from '../store/useChatStore';
-import { chronoTheme } from '../theme/colors';
-
-const { colors, radius } = chronoTheme;
 
 interface CreateRoomModalProps {
   visible: boolean;
@@ -30,7 +25,7 @@ interface CreateRoomModalProps {
   onRoomCreated?: (room: any) => void;
 }
 
-const PRESET_ICONS = ['💬', '🚀', '🎮', '💡', '🔥', '🎧', '⚡', '☕', '🌟'];
+const PRESET_ICONS = ['💬', '🚀', '🎮', '💡', '🔥', '🎧', '⚡', '☕'];
 
 export const CreateRoomModal: React.FC<CreateRoomModalProps> = ({
   visible,
@@ -40,72 +35,24 @@ export const CreateRoomModal: React.FC<CreateRoomModalProps> = ({
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [selectedIcon, setSelectedIcon] = useState('💬');
-  const [pickedImageUri, setPickedImageUri] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const { fetchRooms, setActiveRoom, uploadTempRoomIcon } = useChatStore();
-
-  const handlePickImage = async () => {
-    try {
-      const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (!permissionResult.granted) {
-        Alert.alert(
-          'İzin Gerekli',
-          'Fotoğraf seçebilmek için galeri iznine ihtiyacımız var.',
-        );
-        return;
-      }
-
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ['images'],
-        allowsEditing: true,
-        aspect: [1, 1],
-        quality: 0.8,
-      });
-
-      if (!result.canceled && result.assets && result.assets.length > 0) {
-        setPickedImageUri(result.assets[0].uri);
-      }
-    } catch {
-      Alert.alert('Hata', 'Fotoğraf seçilirken bir sorun oluştu.');
-    }
-  };
-
-  const handleRemoveImage = () => {
-    setPickedImageUri(null);
-  };
+  const [nameFocused, setNameFocused] = useState(false);
+  const [descFocused, setDescFocused] = useState(false);
+  const { fetchRooms, setActiveRoom } = useChatStore();
 
   const handleCreate = async () => {
     if (!name.trim()) {
-      Alert.alert('Uyarı', 'Lütfen bir sohbet odası adı girin');
+      Alert.alert('Uyarı', 'Lütfen bir oda adı girin');
       return;
     }
 
     try {
       setLoading(true);
-
-      let iconUrl: string | null = null;
-      if (pickedImageUri) {
-        const filename = pickedImageUri.split('/').pop() || 'room_icon.jpg';
-        const match = /\.(\w+)$/.exec(filename);
-        const type = match ? `image/${match[1]}` : 'image/jpeg';
-
-        const formData = new FormData();
-        formData.append('file', {
-          uri: pickedImageUri,
-          name: filename,
-          type,
-        } as any);
-
-        const uploadRes = await uploadTempRoomIcon(formData);
-        iconUrl = uploadRes.iconUrl;
-      }
-
-      const roomName = pickedImageUri ? name.trim() : `${selectedIcon} ${name.trim()}`;
+      const roomName = `${selectedIcon} ${name.trim()}`;
 
       const res = await api.post('/rooms', {
         name: roomName,
         description: description.trim(),
-        iconUrl,
       });
 
       await fetchRooms();
@@ -113,12 +60,11 @@ export const CreateRoomModal: React.FC<CreateRoomModalProps> = ({
       if (onRoomCreated) onRoomCreated(res.data);
       setName('');
       setDescription('');
-      setPickedImageUri(null);
       onClose();
     } catch (err: any) {
       Alert.alert(
         'Hata',
-        err.response?.data?.message || err?.message || 'Sohbet odası oluşturulurken bir hata oluştu',
+        err.response?.data?.message || err?.message || 'Oda oluşturulamadı',
       );
     } finally {
       setLoading(false);
@@ -128,7 +74,6 @@ export const CreateRoomModal: React.FC<CreateRoomModalProps> = ({
   const handleClose = () => {
     setName('');
     setDescription('');
-    setPickedImageUri(null);
     onClose();
   };
 
@@ -143,111 +88,118 @@ export const CreateRoomModal: React.FC<CreateRoomModalProps> = ({
             <SafeAreaView style={styles.card} edges={['bottom']}>
               <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
                 <View>
-                  {/* Header */}
+                  {/* Sürükleme Çubuğu */}
+                  <View style={styles.dragHandleContainer}>
+                    <View style={styles.dragHandle} />
+                  </View>
+
+                  {/* Başlık ve Kapat Butonu */}
                   <View style={styles.header}>
-                    <Text style={styles.title}>Yeni Sohbet Odası</Text>
-                    <TouchableOpacity onPress={handleClose} style={styles.closeBtn} activeOpacity={0.7}>
-                      <Ionicons name="close" size={24} color={colors.textSecondary} />
+                    <Text style={styles.title}>Yeni oda</Text>
+                    <TouchableOpacity
+                      onPress={handleClose}
+                      style={styles.closeBtn}
+                      activeOpacity={0.7}
+                    >
+                      <Ionicons name="close" size={20} color="#94A3B8" />
                     </TouchableOpacity>
                   </View>
+
+                  {/* Açıklama */}
                   <Text style={styles.subtitle}>
-                    Topluluk ve canlı sesli sohbet odası başlatın.
+                    Mesajlaşmak ve canlı sesli sohbet için bir oda aç.
                   </Text>
 
                   <ScrollView showsVerticalScrollIndicator={false}>
-                    {/* Oda Avatarı (Cloudinary) */}
-                    <View style={styles.avatarSection}>
-                      <TouchableOpacity
-                        style={styles.avatarPickerButton}
-                        onPress={handlePickImage}
-                        activeOpacity={0.8}
-                      >
-                        {pickedImageUri ? (
-                          <Image source={{ uri: pickedImageUri }} style={styles.avatarPreviewImage} />
-                        ) : (
-                          <View style={styles.avatarPlaceholder}>
-                            <Text style={styles.placeholderEmoji}>{selectedIcon}</Text>
-                          </View>
-                        )}
-                        <View style={styles.cameraBadge}>
-                          <Ionicons name="camera" size={16} color="#ffffff" />
-                        </View>
-                      </TouchableOpacity>
+                    {/* SİMGE Başlığı */}
+                    <Text style={styles.sectionLabel}>SİMGE</Text>
 
-                      <View style={styles.avatarActionRow}>
-                        <TouchableOpacity onPress={handlePickImage} activeOpacity={0.7}>
-                          <Text style={styles.avatarActionText}>
-                            {pickedImageUri ? 'Fotoğrafı Değiştir' : 'Oda Avatarı Yükle'}
-                          </Text>
-                        </TouchableOpacity>
-                        {pickedImageUri && (
-                          <>
-                            <Text style={styles.avatarActionDot}>•</Text>
-                            <TouchableOpacity onPress={handleRemoveImage} activeOpacity={0.7}>
-                              <Text style={styles.avatarRemoveText}>Kaldır</Text>
-                            </TouchableOpacity>
-                          </>
-                        )}
+                    {/* Simge Seçim Listesi */}
+                    <View style={styles.iconRow}>
+                      {PRESET_ICONS.map((icon) => {
+                        const isSelected = selectedIcon === icon;
+                        return (
+                          <TouchableOpacity
+                            key={icon}
+                            style={[
+                              styles.iconItem,
+                              isSelected && styles.iconItemSelected,
+                            ]}
+                            onPress={() => setSelectedIcon(icon)}
+                            activeOpacity={0.7}
+                          >
+                            <Text style={styles.iconEmoji}>{icon}</Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+
+                    {/* Oda Adı Giriş Kartı */}
+                    <View
+                      style={[
+                        styles.inputCard,
+                        nameFocused && styles.inputCardFocused,
+                      ]}
+                    >
+                      <View style={styles.inputCardIcon}>
+                        <Ionicons name="people-outline" size={22} color="#38BDF8" />
+                      </View>
+                      <View style={styles.inputCardContent}>
+                        <Text style={styles.inputCardLabel}>Oda adı</Text>
+                        <TextInput
+                          style={styles.inputCardText}
+                          placeholder="Örn: Yazılım ve Tasarım"
+                          placeholderTextColor="#475569"
+                          value={name}
+                          onChangeText={setName}
+                          onFocus={() => setNameFocused(true)}
+                          onBlur={() => setNameFocused(false)}
+                          maxLength={40}
+                        />
                       </View>
                     </View>
 
-                    {/* Simge Seçimi (Eğer fotoğraf seçilmediyse kullanılır) */}
-                    {!pickedImageUri && (
-                      <>
-                        <Text style={styles.label}>Veya Simge Seçin</Text>
-                        <View style={styles.iconRow}>
-                          {PRESET_ICONS.map((icon) => (
-                            <TouchableOpacity
-                              key={icon}
-                              style={[
-                                styles.iconBadge,
-                                selectedIcon === icon && styles.selectedIconBadge,
-                              ]}
-                              onPress={() => setSelectedIcon(icon)}
-                              activeOpacity={0.7}
-                            >
-                              <Text style={styles.iconText}>{icon}</Text>
-                            </TouchableOpacity>
-                          ))}
-                        </View>
-                      </>
-                    )}
+                    {/* Açıklama Giriş Kartı */}
+                    <View
+                      style={[
+                        styles.inputCard,
+                        descFocused && styles.inputCardFocused,
+                      ]}
+                    >
+                      <View style={styles.inputCardIcon}>
+                        <Ionicons name="pencil-outline" size={20} color="#38BDF8" />
+                      </View>
+                      <View style={styles.inputCardContent}>
+                        <Text style={styles.inputCardLabel}>Açıklama (isteğe bağlı)</Text>
+                        <TextInput
+                          style={styles.inputCardText}
+                          placeholder="Odanın amacını yaz"
+                          placeholderTextColor="#475569"
+                          value={description}
+                          onChangeText={setDescription}
+                          onFocus={() => setDescFocused(true)}
+                          onBlur={() => setDescFocused(false)}
+                          maxLength={120}
+                        />
+                      </View>
+                    </View>
 
-                    {/* Room Name */}
-                    <Text style={styles.label}>Sohbet Odası Adı</Text>
-                    <TextInput
-                      style={styles.input}
-                      placeholder="Örn: Yazılım ve Tasarım"
-                      placeholderTextColor={colors.inputPlaceholder}
-                      value={name}
-                      onChangeText={setName}
-                      maxLength={40}
-                    />
-
-                    {/* Room Description */}
-                    <Text style={styles.label}>Açıklama (İsteğe Bağlı)</Text>
-                    <TextInput
-                      style={[styles.input, styles.textArea]}
-                      placeholder="Odanın amacını veya kurallarını belirtin..."
-                      placeholderTextColor={colors.inputPlaceholder}
-                      value={description}
-                      onChangeText={setDescription}
-                      multiline
-                      numberOfLines={3}
-                      maxLength={150}
-                    />
-
-                    {/* Submit Button */}
+                    {/* Odayı Aç Butonu */}
                     <TouchableOpacity
-                      style={[styles.createBtn, loading && styles.btnDisabled]}
+                      style={[styles.openRoomBtn, loading && styles.btnDisabled]}
                       onPress={handleCreate}
                       disabled={loading}
-                      activeOpacity={0.8}
+                      activeOpacity={0.85}
                     >
                       {loading ? (
-                        <ActivityIndicator color="#ffffff" />
+                        <ActivityIndicator color="#FFFFFF" />
                       ) : (
-                        <Text style={styles.createBtnText}>Sohbet Odasını Başlat</Text>
+                        <View style={styles.openRoomBtnContent}>
+                          <Text style={styles.openRoomBtnText}>Odayı Aç</Text>
+                          <View style={styles.plusIconCircle}>
+                            <Ionicons name="add" size={18} color="#FFFFFF" />
+                          </View>
+                        </View>
                       )}
                     </TouchableOpacity>
                   </ScrollView>
@@ -264,7 +216,7 @@ export const CreateRoomModal: React.FC<CreateRoomModalProps> = ({
 const styles = StyleSheet.create({
   overlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    backgroundColor: 'rgba(0, 0, 0, 0.75)',
     justifyContent: 'flex-end',
   },
   keyboardAvoid: {
@@ -272,164 +224,152 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
   },
   card: {
-    backgroundColor: colors.surfaceElevated,
-    borderTopLeftRadius: 26,
-    borderTopRightRadius: 26,
-    padding: 24,
-    maxHeight: '90%',
+    backgroundColor: '#0E1424',
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    paddingHorizontal: 20,
+    paddingTop: 12,
+    paddingBottom: 28,
     borderTopWidth: 1,
-    borderTopColor: colors.borderLight,
+    borderTopColor: 'rgba(255, 255, 255, 0.08)',
+  },
+  dragHandleContainer: {
+    alignItems: 'center',
+    paddingVertical: 6,
+  },
+  dragHandle: {
+    width: 40,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: '#334155',
   },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    marginTop: 8,
     marginBottom: 6,
   },
   title: {
-    fontSize: 20,
+    fontSize: 22,
     fontWeight: '700',
-    color: colors.textPrimary,
-  },
-  subtitle: {
-    fontSize: 13,
-    color: colors.textSecondary,
-    marginBottom: 16,
-    lineHeight: 18,
+    color: '#FFFFFF',
+    letterSpacing: 0.2,
   },
   closeBtn: {
-    padding: 4,
-  },
-  avatarSection: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#162032',
     alignItems: 'center',
+    justifyContent: 'center',
+  },
+  subtitle: {
+    fontSize: 14,
+    color: '#94A3B8',
     marginBottom: 20,
-    marginTop: 4,
+    lineHeight: 20,
   },
-  avatarPickerButton: {
-    width: 86,
-    height: 86,
-    borderRadius: 43,
-    position: 'relative',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  avatarPreviewImage: {
-    width: 86,
-    height: 86,
-    borderRadius: 43,
-    borderWidth: 2,
-    borderColor: colors.primaryLight,
-  },
-  avatarPlaceholder: {
-    width: 86,
-    height: 86,
-    borderRadius: 43,
-    backgroundColor: colors.surface,
-    borderWidth: 2,
-    borderColor: colors.borderLight,
-    borderStyle: 'dashed',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  placeholderEmoji: {
-    fontSize: 34,
-  },
-  cameraBadge: {
-    position: 'absolute',
-    bottom: 0,
-    right: 0,
-    backgroundColor: colors.primary,
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 2,
-    borderColor: colors.surfaceElevated,
-    elevation: 3,
-  },
-  avatarActionRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 10,
-    gap: 8,
-  },
-  avatarActionText: {
-    color: colors.primaryLight,
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  avatarActionDot: {
-    color: colors.textSecondary,
-    fontSize: 13,
-  },
-  avatarRemoveText: {
-    color: colors.error,
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  label: {
-    fontSize: 12,
+  sectionLabel: {
+    fontSize: 11,
     fontWeight: '700',
-    color: colors.primaryLight,
-    marginBottom: 8,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
+    color: '#64748B',
+    marginBottom: 12,
+    letterSpacing: 0.8,
   },
   iconRow: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 10,
-    marginBottom: 16,
-  },
-  iconBadge: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: colors.surface,
-    justifyContent: 'center',
     alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 20,
+  },
+  iconItem: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: '#131B2E',
+    alignItems: 'center',
+    justifyContent: 'center',
     borderWidth: 1.5,
-    borderColor: colors.border,
+    borderColor: 'transparent',
   },
-  selectedIconBadge: {
-    borderColor: colors.primaryLight,
-    backgroundColor: 'rgba(56, 189, 248, 0.15)',
-    transform: [{ scale: 1.08 }],
+  iconItemSelected: {
+    borderColor: '#2563EB',
+    backgroundColor: 'rgba(37, 99, 235, 0.2)',
+    transform: [{ scale: 1.1 }],
   },
-  iconText: {
-    fontSize: 20,
+  iconEmoji: {
+    fontSize: 18,
   },
-  input: {
-    backgroundColor: colors.inputBackground,
-    borderRadius: radius.md,
+  inputCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#131B2E',
+    borderRadius: 18,
     paddingHorizontal: 16,
     paddingVertical: 12,
-    color: colors.textPrimary,
-    fontSize: 15,
     borderWidth: 1,
-    borderColor: colors.border,
-    marginBottom: 16,
+    borderColor: 'rgba(255, 255, 255, 0.06)',
+    marginBottom: 14,
   },
-  textArea: {
-    height: 80,
-    textAlignVertical: 'top',
+  inputCardFocused: {
+    borderColor: '#2563EB',
+    backgroundColor: '#162238',
   },
-  createBtn: {
-    backgroundColor: colors.primary,
-    paddingVertical: 14,
-    borderRadius: radius.md,
+  inputCardIcon: {
+    width: 36,
+    height: 36,
     alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
+  },
+  inputCardContent: {
+    flex: 1,
+  },
+  inputCardLabel: {
+    fontSize: 11,
+    color: '#8A93A8',
+    fontWeight: '600',
+    marginBottom: 2,
+  },
+  inputCardText: {
+    fontSize: 15,
+    color: '#FFFFFF',
+    padding: 0,
+  },
+  openRoomBtn: {
+    backgroundColor: '#2563EB',
+    borderRadius: 26,
+    height: 52,
+    alignItems: 'center',
+    justifyContent: 'center',
     marginTop: 8,
-    marginBottom: 16,
-    elevation: 3,
+    marginBottom: 12,
   },
   btnDisabled: {
     opacity: 0.6,
   },
-  createBtnText: {
-    color: '#ffffff',
+  openRoomBtnContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '100%',
+    paddingHorizontal: 20,
+  },
+  openRoomBtnText: {
+    color: '#FFFFFF',
     fontWeight: '700',
     fontSize: 16,
+    flex: 1,
+    textAlign: 'center',
+    marginLeft: 26,
+  },
+  plusIconCircle: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 });

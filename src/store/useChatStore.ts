@@ -53,6 +53,7 @@ interface ChatStore {
   activeRoom: Room | null;
   setActiveRoom: (room: Room | null) => void;
   fetchRooms: () => Promise<void>;
+  fetchRoomById: (roomId: string) => Promise<Room | null>;
   openDirect: (userId: string) => Promise<Room>;
   togglePinRoom: (roomId: string) => Promise<void>;
   toggleMuteRoom: (roomId: string) => Promise<void>;
@@ -145,8 +146,10 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       // 1. Yeni mesaj geldiğinde
       socket.on('new_message', (message: Message) => {
         const { activeRoom, addMessage, rooms } = get();
+        // Odaya ait mesaj havuzuna her durumda ekle (ekran kapalı veya arka planda olsa bile)
+        addMessage(message);
+
         if (activeRoom && message.roomId === activeRoom.id) {
-          addMessage(message);
           // Açık odadaysak hemen okundu bildir
           get().markAsRead(activeRoom.id);
         }
@@ -216,8 +219,18 @@ export const useChatStore = create<ChatStore>((set, get) => ({
 
       // 2. Mesaj güncellendiğinde (düzenlendi veya silindi)
       socket.on('message_updated', (updatedMessage: Message) => {
-        const { messages, rooms } = get();
+        const { messages, rooms, roomMessages } = get();
+        const roomId = updatedMessage.roomId;
+        const currentRoomMsgs = roomMessages[roomId] || [];
+        const updatedRoomMsgs = currentRoomMsgs.map((m) =>
+          m.id === updatedMessage.id ? updatedMessage : m,
+        );
+
         set({
+          roomMessages: {
+            ...roomMessages,
+            [roomId]: updatedRoomMsgs,
+          },
           messages: messages.map((m) =>
             m.id === updatedMessage.id ? updatedMessage : m,
           ),
@@ -602,13 +615,45 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     if (!get().token) return;
     try {
       const res = await api.get('/rooms');
-      set({ rooms: res.data });
+      const rooms: Room[] = res.data;
+      set((state) => {
+        const updatedRoomMessages = { ...state.roomMessages };
+        for (const r of rooms) {
+          if (r.lastMessage && (!updatedRoomMessages[r.id] || updatedRoomMessages[r.id].length === 0)) {
+            updatedRoomMessages[r.id] = [r.lastMessage];
+          }
+        }
+        return { rooms, roomMessages: updatedRoomMessages };
+      });
     } catch (err: any) {
       if (err?.response?.status === 401) {
         get().logout();
       } else {
         console.warn('fetchRooms error:', err?.message || err);
       }
+    }
+  },
+
+  fetchRoomById: async (roomId: string) => {
+    if (!get().token) return null;
+    try {
+      const res = await api.get(`/rooms/${roomId}`);
+      const room: Room = res.data;
+      set((state) => {
+        const exists = state.rooms.some((r) => r.id === room.id);
+        const updatedRooms = exists
+          ? state.rooms.map((r) => (r.id === room.id ? room : r))
+          : [room, ...state.rooms];
+        const updatedRoomMessages = { ...state.roomMessages };
+        if (room.lastMessage && (!updatedRoomMessages[room.id] || updatedRoomMessages[room.id].length === 0)) {
+          updatedRoomMessages[room.id] = [room.lastMessage];
+        }
+        return { rooms: updatedRooms, roomMessages: updatedRoomMessages };
+      });
+      return room;
+    } catch (err: any) {
+      console.warn('fetchRoomById error:', err?.message || err);
+      return null;
     }
   },
 
@@ -780,8 +825,11 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       const updatedRoomMsgs = existsInRoom ? roomMsgs : [message, ...roomMsgs];
 
       const existsInActive = state.messages.some((m) => m.id === message.id);
+      const isTargetRoomActive =
+        state.activeRoom?.id === roomId ||
+        (!state.activeRoom && state.messages.some((m) => m.roomId === roomId));
       const updatedActiveMsgs =
-        state.activeRoom?.id === roomId && !existsInActive
+        isTargetRoomActive && !existsInActive
           ? [message, ...state.messages]
           : state.messages;
 
@@ -800,7 +848,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       const res = await api.get(`/messages/room/${roomId}`, {
         params: { limit: 40, before },
       });
-      const newMessages: Message[] = res.data;
+      const newMessages: Message[] = res.data || [];
 
       set((state) => {
         const existingForRoom = state.roomMessages[roomId] || [];
@@ -811,7 +859,12 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           const filteredNew = newMessages.filter((m) => !existingIds.has(m.id));
           mergedRoomMessages = [...existingForRoom, ...filteredNew];
         } else {
-          mergedRoomMessages = newMessages;
+          // İlk yükleme: gelen sunucu mesajları ile varsa yerel soket/optimistik mesajları birleştir
+          const newIds = new Set(newMessages.map((m) => m.id));
+          const localOnly = existingForRoom.filter((m) => !newIds.has(m.id));
+          mergedRoomMessages = [...localOnly, ...newMessages].sort(
+            (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+          );
         }
 
         const updatedRoomMessages = {
@@ -819,15 +872,14 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           [roomId]: mergedRoomMessages,
         };
 
-        // Eğer kullanıcı hâlâ bu odadaysa aktif mesaj listesini güncelle
-        if (state.activeRoom?.id === roomId) {
-          return {
-            roomMessages: updatedRoomMessages,
-            messages: mergedRoomMessages,
-          };
-        }
+        // Eğer kullanıcı hâlâ bu odadaysa VEYA aktif oda henüz tanımlanmadıysa aktif listeyi de güncelle
+        const shouldUpdateActive =
+          !state.activeRoom || state.activeRoom.id === roomId;
 
-        return { roomMessages: updatedRoomMessages };
+        return {
+          roomMessages: updatedRoomMessages,
+          ...(shouldUpdateActive ? { messages: mergedRoomMessages } : {}),
+        };
       });
       return true;
     } catch (err: any) {
@@ -839,7 +891,15 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   sendMessage: async (roomId: string, content: string, replyToId?: string) => {
     const socket = getSocket();
     if (socket && socket.connected) {
-      socket.emit('send_message', { roomId, content, replyToId });
+      socket.emit(
+        'send_message',
+        { roomId, content, replyToId },
+        (ack: any) => {
+          if (ack?.ok && ack?.message) {
+            get().addMessage(ack.message);
+          }
+        },
+      );
     } else {
       try {
         const res = await api.post(`/messages/room/${roomId}`, {
@@ -879,12 +939,13 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     try {
       await api.delete(`/messages/${messageId}`);
       set((state) => {
-        const activeRoomId = state.activeRoom?.id;
         const nextRoomMessages = { ...state.roomMessages };
-        if (activeRoomId && nextRoomMessages[activeRoomId]) {
-          nextRoomMessages[activeRoomId] = nextRoomMessages[activeRoomId].map((m) =>
-            m.id === messageId ? { ...m, deletedAt: new Date().toISOString(), content: '' } : m,
-          );
+        for (const rId of Object.keys(nextRoomMessages)) {
+          if (nextRoomMessages[rId]?.some((m) => m.id === messageId)) {
+            nextRoomMessages[rId] = nextRoomMessages[rId].map((m) =>
+              m.id === messageId ? { ...m, deletedAt: new Date().toISOString(), content: '' } : m,
+            );
+          }
         }
         return {
           roomMessages: nextRoomMessages,
