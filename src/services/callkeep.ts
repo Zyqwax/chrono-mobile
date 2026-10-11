@@ -1,0 +1,113 @@
+import { Platform } from 'react-native';
+
+let RNCallKeep: any = null;
+let isCallKeepAvailable = false;
+
+try {
+  // Native build ortamında modülü yükle
+  RNCallKeep = require('react-native-callkeep').default;
+  if (RNCallKeep && typeof RNCallKeep.setup === 'function') {
+    isCallKeepAvailable = true;
+  }
+} catch (e) {
+  // Expo Go veya native olmayan ortamda sessizce devre dışı bırak
+  isCallKeepAvailable = false;
+}
+
+export interface CallKeepCallbacks {
+  onAnswerCall: (callId: string) => void;
+  onEndCall: (callId: string) => void;
+}
+
+class CallKeepService {
+  private isInitialized = false;
+
+  async setup(callbacks: CallKeepCallbacks) {
+    if (!isCallKeepAvailable || !RNCallKeep || this.isInitialized) return;
+
+    try {
+      const options = {
+        ios: {
+          appName: 'Chrono',
+          supportsVideo: true,
+          maximumCallGroups: '1',
+          maximumCallsPerCallGroup: '1',
+        },
+        android: {
+          alertTitle: 'Arama İzni Gerekli',
+          alertDescription: 'Chrono uygulamasının arama yapabilmesi ve alabilmesi için telefon izinlerine ihtiyacı var.',
+          cancelButton: 'İptal',
+          okButton: 'Tamam',
+          imageName: 'ic_launcher',
+          additionalPermissions: [],
+          foregroundService: {
+            channelId: 'chrono_calls',
+            channelName: 'Chrono Aramalar',
+            notificationTitle: 'Chrono Aktif Arama',
+            notificationIcon: 'ic_launcher',
+          },
+        },
+      };
+
+      await RNCallKeep.setup(options);
+      RNCallKeep.setAvailable(true);
+
+      RNCallKeep.addEventListener('answerCall', ({ callUUID }: { callUUID: string }) => {
+        callbacks.onAnswerCall(callUUID);
+      });
+
+      RNCallKeep.addEventListener('endCall', ({ callUUID }: { callUUID: string }) => {
+        callbacks.onEndCall(callUUID);
+      });
+
+      this.isInitialized = true;
+      console.log('📱 CallKeep (CallKit / TelecomManager) başarıyla başlatıldı.');
+    } catch (err) {
+      console.warn('CallKeep kurulum uyarısı:', err);
+    }
+  }
+
+  displayIncomingCall(callId: string, callerName: string, hasVideo = false) {
+    if (!isCallKeepAvailable || !RNCallKeep) return;
+    try {
+      RNCallKeep.displayIncomingCall(
+        callId,
+        callerName,
+        callerName,
+        'generic',
+        hasVideo,
+      );
+    } catch (err) {
+      console.warn('CallKeep gelen arama gösterme hatası:', err);
+    }
+  }
+
+  startOutgoingCall(callId: string, calleeName: string, hasVideo = false) {
+    if (!isCallKeepAvailable || !RNCallKeep) return;
+    try {
+      RNCallKeep.startCall(callId, calleeName, calleeName, 'generic', hasVideo);
+    } catch (err) {
+      console.warn('CallKeep giden arama hatası:', err);
+    }
+  }
+
+  reportConnectedCall(callId: string) {
+    if (!isCallKeepAvailable || !RNCallKeep) return;
+    try {
+      RNCallKeep.setCurrentCallActive(callId);
+    } catch (err) {
+      console.warn('CallKeep arama aktif hatası:', err);
+    }
+  }
+
+  endCall(callId: string) {
+    if (!isCallKeepAvailable || !RNCallKeep) return;
+    try {
+      RNCallKeep.endCall(callId);
+    } catch (err) {
+      console.warn('CallKeep arama sonlandırma hatası:', err);
+    }
+  }
+}
+
+export const callKeepService = new CallKeepService();
