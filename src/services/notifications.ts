@@ -8,12 +8,23 @@ import { useChatStore } from '../store/useChatStore';
 import { callSoundService } from './sound';
 
 // Uygulama açıkken bildirimlerin görünüm davranışı (Foreground Filtering / Çift Bildirim Engelleyici)
+// Uygulama açıkken bildirimlerin görünüm davranışı (Foreground Filtering / Çift Bildirim Engelleyici)
 Notifications.setNotificationHandler({
   handleNotification: async (notification) => {
     const data = notification.request.content.data;
-    const isSilent = Boolean(data?.isSilent || data?.type === 'active_call');
 
-    // Aktif oda kontrolü: Eğer kullanıcı o an bildirimin geldiği odayı açık tutuyorsa bildirimi ve sesi bastır!
+    // 1. Arama bildirimleri (Notifee ve CallKeep tarafından yönetilir, Expo Notification bastırılır)
+    if (data?.type === 'incoming_call' || data?.type === 'call_cancelled') {
+      return {
+        shouldShowAlert: false,
+        shouldShowBanner: false,
+        shouldShowList: false,
+        shouldPlaySound: false,
+        shouldSetBadge: false,
+      };
+    }
+
+    // 2. Aktif oda kontrolü: Eğer kullanıcı o an bildirimin geldiği odayı açık tutuyorsa bildirimi ve sesi bastır
     const activeRoomId = useChatStore?.getState?.()?.activeRoom?.id;
     if (data?.roomId && activeRoomId === data.roomId) {
       return {
@@ -25,11 +36,27 @@ Notifications.setNotificationHandler({
       };
     }
 
+    // 3. Sessiz veya devam eden arama bildirimleri
+    const isSilent = Boolean(data?.isSilent || data?.type === 'active_call');
+    if (isSilent) {
+      return {
+        shouldShowAlert: false,
+        shouldShowBanner: false,
+        shouldShowList: true,
+        shouldPlaySound: false,
+        shouldSetBadge: false,
+      };
+    }
+
+    // 4. Diğer durumlarda banner/list göster, ses kullanıcı ayarına göre
+    const settings = useChatStore?.getState?.()?.settings;
+    const shouldPlaySound = settings?.inAppSounds ?? true;
+
     return {
-      shouldShowAlert: !isSilent,
-      shouldShowBanner: !isSilent,
+      shouldShowAlert: true,
+      shouldShowBanner: true,
       shouldShowList: true,
-      shouldPlaySound: !isSilent,
+      shouldPlaySound,
       shouldSetBadge: false,
     };
   },
@@ -107,8 +134,7 @@ export async function registerForPushNotificationsAsync(): Promise<string | null
 class NotificationService {
   private isConfigured = false;
   private currentCallNotificationId: string | null = null;
-  // Oda bazlı okunmamış mesaj sayaçları (WhatsApp stili stackleme için)
-  private roomUnreadCounts = new Map<string, number>();
+
 
   async init() {
     if (this.isConfigured) return;
@@ -186,74 +212,17 @@ class NotificationService {
     }
   }
 
-  // Sohbet odasından yeni mesaj geldiğinde bildirim göster (WhatsApp stili stackleme)
-  async showMessageNotification(
-    senderName: string,
-    text: string,
-    roomId: string,
-    options?: { playSound?: boolean },
-  ) {
-    try {
-      const playSound = options?.playSound ?? true;
-
-      // Eğer arama JSON objesi geldiyse bildirim olarak ham JSON gösterme
-      let displayText = text;
-      if (typeof text === 'string' && text.trim().startsWith('{') && text.includes('"status"')) {
-        try {
-          const parsed = JSON.parse(text);
-          if (parsed.status === 'ended') {
-            // Normal sonlanan arama için bildirim gösterilmez
-            return;
-          }
-          if (
-            parsed.status === 'missed' ||
-            parsed.status === 'declined' ||
-            parsed.status === 'busy' ||
-            parsed.status === 'cancelled'
-          ) {
-            displayText = parsed.video ? '📹 Cevapsız görüntülü arama' : '📞 Cevapsız sesli arama';
-          } else {
-            return;
-          }
-        } catch {
-          // JSON parse edilemediyse normal metin olarak devam et
-        }
-      }
-
-      // Oda bazlı okunmamış mesaj sayacını artır
-      const unreadCount = (this.roomUnreadCounts.get(roomId) || 0) + 1;
-      this.roomUnreadCounts.set(roomId, unreadCount);
-
-      // WhatsApp Stili Format:
-      // 1 mesaj varsa sadece mesaj metni; birden fazla varsa "${unreadCount} yeni mesaj: ${sonMesaj}"
-      const notificationBody =
-        unreadCount > 1 ? `${unreadCount} yeni mesaj: ${displayText}` : displayText;
-
-      await Notifications.scheduleNotificationAsync({
-        identifier: `chat_${roomId}`, // Sabit identifier: bildirim paneli dolmak yerine mevcut bildirim güncellenir
-        content: {
-          title: senderName,
-          body: notificationBody,
-          data: { roomId, type: 'message' },
-          sound: playSound,
-          color: '#38BDF8',
-          ...(Platform.OS === 'android'
-            ? { channelId: playSound ? 'chat-messages' : 'silent_channel' }
-            : {}),
-          ...(Platform.OS === 'ios' ? { threadIdentifier: `room_${roomId}` } : {}),
-        },
-        trigger: null, // Hemen göster
-      });
-    } catch (err) {
-      console.warn('Mesaj bildirimi gösterme hatası:', err);
-    }
-  }
-
-  // Kullanıcı odaya girdiğinde ilgili odanın bildirimini temizle ve sayacı sıfırla
+  // Kullanıcı odaya girdiğinde ilgili odanın bildirimlerini temizle
   async clearRoomNotifications(roomId: string) {
     try {
-      this.roomUnreadCounts.delete(roomId);
-      await Notifications.dismissNotificationAsync(`chat_${roomId}`);
+      await Notifications.dismissNotificationAsync(`chat_${roomId}`).catch(() => {});
+      const presented = await Notifications.getPresentedNotificationsAsync();
+      for (const notif of presented) {
+        const notifData = notif.request?.content?.data;
+        if (notifData?.roomId === roomId || notif.request?.identifier === `chat_${roomId}`) {
+          await Notifications.dismissNotificationAsync(notif.request.identifier).catch(() => {});
+        }
+      }
     } catch (err) {
       // yut
     }
