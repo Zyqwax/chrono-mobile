@@ -25,6 +25,7 @@ import { callKeepService } from '../services/callkeep';
 import { liveKitService, type VideoTracksState } from '../services/livekit';
 import { notificationService } from '../services/notifications';
 import { foregroundServiceManager } from '../services/foregroundService';
+import { callSoundService } from '../services/sound';
 
 const { colors } = chronoTheme;
 
@@ -124,18 +125,32 @@ export const ActiveCallModal: React.FC = () => {
     }
   }, [activeCall, isIncoming, isOutgoing, isActive]);
 
-  // Yalnızca gelen aramada (aranan kişinin telefonunda) titreşim
+  // Arama zil sesleri (Giden arama: santral çalma sesi "düüüt...", Gelen arama: telefonun varsayılan sistem zil sesi + sürekli titreşim)
   useEffect(() => {
-    if (isIncoming && activeCall?.state === 'ringing') {
-      // 0ms gecikme ile hemen başla, 1000ms titreş, 1000ms bekle döngüsü
-      Vibration.vibrate([0, 1000, 1000, 1000], true);
-      return () => {
-        Vibration.cancel();
-      };
+    if (activeCall?.state === 'ringing') {
+      if (isOutgoing) {
+        callSoundService.startOutgoingRingback();
+        return () => {
+          callSoundService.stopAll();
+        };
+      } else if (isIncoming) {
+        // Gelen aramada telefonun varsayılan sistem zil sesi Notifee üzerinden çalar.
+        // Ekranda da kesintisiz, sürekli titreşim döngüsü çalışır.
+        Vibration.vibrate([0, 1000, 800, 1000], true);
+        const vibInterval = setInterval(() => {
+          Vibration.vibrate([0, 1000, 800, 1000], true);
+        }, 2800);
+        return () => {
+          clearInterval(vibInterval);
+          Vibration.cancel();
+          callSoundService.stopAll();
+        };
+      }
     } else {
+      callSoundService.stopAll();
       Vibration.cancel();
     }
-  }, [isIncoming, activeCall?.state]);
+  }, [activeCall?.state, isIncoming, isOutgoing]);
 
   // Radar / Halka animasyonu
   useEffect(() => {

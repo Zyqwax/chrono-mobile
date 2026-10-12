@@ -2,8 +2,10 @@ import * as Device from 'expo-device';
 import Constants from 'expo-constants';
 import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
+import notifee, { AndroidCategory, AndroidImportance } from '@notifee/react-native';
 import { foregroundServiceManager } from './foregroundService';
 import { useChatStore } from '../store/useChatStore';
+import { callSoundService } from './sound';
 
 // Uygulama açıkken bildirimlerin görünüm davranışı (Foreground Filtering / Çift Bildirim Engelleyici)
 Notifications.setNotificationHandler({
@@ -248,9 +250,51 @@ class NotificationService {
     }
   }
 
-  // Gelen arama bildirimi (Heads-up / Tam bildirim)
+  // Gelen arama bildirimi (Heads-up / Tam bildirim, kesintisiz zil sesi ve titreşim)
   async showCallNotification(callerName: string, isVideo: boolean, callId: string) {
     try {
+      if (Platform.OS === 'android') {
+        try {
+          await notifee.createChannel({
+            id: 'chrono_incoming_calls',
+            name: 'Gelen Aramalar',
+            importance: AndroidImportance.HIGH,
+            sound: 'default',
+            vibration: true,
+            vibrationPattern: [0, 1000, 800, 1000],
+          });
+
+          await notifee.displayNotification({
+            id: `call_${callId}`,
+            title: isVideo ? '📹 Gelen Görüntülü Arama' : '📞 Gelen Sesli Arama',
+            body: `${callerName} sizi arıyor...`,
+            data: { callId, type: 'call' },
+            android: {
+              channelId: 'chrono_incoming_calls',
+              category: AndroidCategory.CALL,
+              importance: AndroidImportance.HIGH,
+              sound: 'default',
+              loopSound: true,
+              ongoing: true,
+              vibrationPattern: [0, 1000, 800, 1000],
+              pressAction: { id: 'default', launchActivity: 'default' },
+              actions: [
+                {
+                  title: 'Cevapla',
+                  pressAction: { id: 'answer_call', launchActivity: 'default' },
+                },
+                {
+                  title: 'Reddet',
+                  pressAction: { id: 'decline_call' },
+                },
+              ],
+            },
+          });
+        } catch (e) {
+          console.warn('Notifee arama bildirimi hatası:', e);
+        }
+      }
+
       const id = await Notifications.scheduleNotificationAsync({
         content: {
           title: isVideo ? '📹 Gelen Görüntülü Arama' : '📞 Gelen Sesli Arama',
@@ -269,8 +313,21 @@ class NotificationService {
     }
   }
 
-  // Arama sonlandığında gelen arama bildirimini temizle
-  async dismissCallNotification() {
+  // Arama sonlandığında gelen arama bildirimini ve sesleri temizle
+  async dismissCallNotification(callId?: string) {
+    void callSoundService.stopAll();
+
+    if (Platform.OS === 'android') {
+      try {
+        if (callId) {
+          await notifee.cancelNotification(`call_${callId}`);
+        }
+        await notifee.cancelNotification('call_notif');
+      } catch {
+        // yut
+      }
+    }
+
     if (this.currentCallNotificationId) {
       try {
         await Notifications.dismissNotificationAsync(this.currentCallNotificationId);

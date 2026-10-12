@@ -594,12 +594,13 @@ export const useChatStore = create<ChatStore>((set, get) => ({
 
       socket.on('call_accepted', (call: IncomingCall) => {
         set({ activeCall: { ...call, state: 'active' } });
-        notificationService.dismissCallNotification();
+        notificationService.dismissCallNotification(call?.callId);
       });
 
       socket.on('call_ended', () => {
+        const lastCallId = get().activeCall?.callId;
         set({ activeCall: null });
-        notificationService.dismissCallNotification();
+        notificationService.dismissCallNotification(lastCallId);
         notificationService.dismissOngoingCallNotification();
       });
 
@@ -1589,7 +1590,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     if (socket && socket.connected) {
       socket.emit('call_decline', { callId });
     }
-    notificationService.dismissCallNotification();
+    notificationService.dismissCallNotification(callId);
     set({ activeCall: null });
   },
 
@@ -1598,7 +1599,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     if (socket && socket.connected) {
       socket.emit('call_end', { callId });
     }
-    notificationService.dismissCallNotification();
+    notificationService.dismissCallNotification(callId);
     set({ activeCall: null });
   },
 }));
