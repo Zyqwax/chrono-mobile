@@ -14,6 +14,8 @@ try {
   isCallKeepAvailable = false;
 }
 
+const displayedCallIds = new Set<string>();
+
 export interface CallKeepCallbacks {
   onAnswerCall: (callId: string) => void;
   onEndCall: (callId: string) => void;
@@ -63,10 +65,12 @@ class CallKeepService {
       }
 
       RNCallKeep.addEventListener('answerCall', ({ callUUID }: { callUUID: string }) => {
+        displayedCallIds.delete(callUUID);
         callbacks.onAnswerCall(callUUID);
       });
 
       RNCallKeep.addEventListener('endCall', ({ callUUID }: { callUUID: string }) => {
+        displayedCallIds.delete(callUUID);
         callbacks.onEndCall(callUUID);
       });
 
@@ -98,6 +102,11 @@ class CallKeepService {
 
   displayIncomingCall(callId: string, callerName: string, hasVideo = false) {
     if (!isCallKeepAvailable || !RNCallKeep) return;
+    if (displayedCallIds.has(callId)) {
+      console.log(`📱 [CallKeep] Arama zaten gösterildi (deduped): ${callId}`);
+      return;
+    }
+    displayedCallIds.add(callId);
     try {
       RNCallKeep.displayIncomingCall(
         callId,
@@ -130,6 +139,7 @@ class CallKeepService {
   }
 
   endCall(callId: string) {
+    displayedCallIds.delete(callId);
     if (!isCallKeepAvailable || !RNCallKeep) return;
     try {
       RNCallKeep.endCall(callId);

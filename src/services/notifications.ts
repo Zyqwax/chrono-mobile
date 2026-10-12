@@ -2,12 +2,16 @@ import * as Device from 'expo-device';
 import Constants from 'expo-constants';
 import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
-import notifee, { AndroidCategory, AndroidImportance } from '@notifee/react-native';
+import notifee, {
+  AndroidCategory,
+  AndroidImportance,
+  AndroidVisibility,
+} from '@notifee/react-native';
 import { foregroundServiceManager } from './foregroundService';
 import { useChatStore } from '../store/useChatStore';
 import { callSoundService } from './sound';
+import { callKeepService } from './callkeep';
 
-// Uygulama açıkken bildirimlerin görünüm davranışı (Foreground Filtering / Çift Bildirim Engelleyici)
 // Uygulama açıkken bildirimlerin görünüm davranışı (Foreground Filtering / Çift Bildirim Engelleyici)
 Notifications.setNotificationHandler({
   handleNotification: async (notification) => {
@@ -134,7 +138,7 @@ export async function registerForPushNotificationsAsync(): Promise<string | null
 class NotificationService {
   private isConfigured = false;
   private currentCallNotificationId: string | null = null;
-
+  private callTimeouts = new Map<string, any>();
 
   async init() {
     if (this.isConfigured) return;
@@ -153,6 +157,7 @@ class NotificationService {
           await Notifications.deleteNotificationChannelAsync('messages_channel');
           await Notifications.deleteNotificationChannelAsync('ongoing_calls_channel');
           await Notifications.deleteNotificationChannelAsync('ongoing_calls_channel_v2');
+          await notifee.deleteChannel('chrono_incoming_calls_v2').catch(() => {});
         } catch {
           // yut
         }
@@ -233,27 +238,32 @@ class NotificationService {
     try {
       if (Platform.OS === 'android') {
         try {
+          await notifee.deleteChannel('chrono_incoming_calls_v2').catch(() => {});
           await notifee.createChannel({
-            id: 'chrono_incoming_calls_v2',
+            id: 'chrono_incoming_calls_v3',
             name: 'Gelen Aramalar',
             importance: AndroidImportance.HIGH,
-            sound: undefined,
+            sound: 'ringtone',
             vibration: true,
             vibrationPattern: [0, 1000, 800, 1000],
           });
 
-          const notifId = await notifee.displayNotification({
-            id: `call_${callId}`,
+          const notifId = `call_${callId}`;
+          await notifee.displayNotification({
+            id: notifId,
             title: isVideo ? '📹 Gelen Görüntülü Arama' : '📞 Gelen Sesli Arama',
             body: `${callerName} sizi arıyor...`,
-            data: { callId, type: 'call' },
+            data: { callId, type: 'incoming_call', roomId: '', callerName, video: String(isVideo) },
             android: {
-              channelId: 'chrono_incoming_calls_v2',
+              channelId: 'chrono_incoming_calls_v3',
               category: AndroidCategory.CALL,
               importance: AndroidImportance.HIGH,
-              sound: 'default',
+              visibility: AndroidVisibility.PUBLIC,
+              sound: 'ringtone',
               loopSound: true,
               ongoing: true,
+              autoCancel: false,
+              timeoutAfter: 30000,
               vibrationPattern: [0, 1000, 800, 1000],
               pressAction: { id: 'default', launchActivity: 'default' },
               fullScreenAction: { id: 'default', launchActivity: 'default' },
@@ -270,6 +280,21 @@ class NotificationService {
             },
           });
           this.currentCallNotificationId = notifId;
+
+          // 30 saniyelik zaman aşımı: Arama yanıtlanmazsa temizle
+          if (this.callTimeouts.has(callId)) {
+            clearTimeout(this.callTimeouts.get(callId));
+          }
+          const timeout = setTimeout(() => {
+            void this.dismissCallNotification(callId);
+            const state = useChatStore?.getState?.();
+            if (state?.activeCall?.callId === callId && state.activeCall.state === 'ringing') {
+              state.declineCall(callId);
+            }
+            this.callTimeouts.delete(callId);
+          }, 30000);
+          this.callTimeouts.set(callId, timeout);
+
           return;
         } catch (e) {
           console.warn('Notifee arama bildirimi hatası:', e);
@@ -277,19 +302,21 @@ class NotificationService {
       }
 
       // iOS ve fallback ortamlar için expo-notifications
-      const id = await Notifications.scheduleNotificationAsync({
+      const notifId = `call_${callId}`;
+      await Notifications.scheduleNotificationAsync({
+        identifier: notifId,
         content: {
           title: isVideo ? '📹 Gelen Görüntülü Arama' : '📞 Gelen Sesli Arama',
           body: `${callerName} sizi arıyor...`,
-          data: { callId, type: 'call' },
-          sound: true,
+          data: { callId, type: 'incoming_call' },
+          sound: 'ringtone.wav',
           color: '#10B981',
           priority: Notifications.AndroidNotificationPriority.MAX,
           ...(Platform.OS === 'android' ? { channelId: 'calls_channel_v2' } : {}),
         },
         trigger: null,
       });
-      this.currentCallNotificationId = id;
+      this.currentCallNotificationId = notifId;
     } catch (err) {
       console.warn('Arama bildirimi gösterme hatası:', err);
     }
@@ -298,6 +325,14 @@ class NotificationService {
   // Arama sonlandığında gelen arama bildirimini ve sesleri temizle
   async dismissCallNotification(callId?: string) {
     void callSoundService.stopAll();
+
+    if (callId) {
+      if (this.callTimeouts.has(callId)) {
+        clearTimeout(this.callTimeouts.get(callId));
+        this.callTimeouts.delete(callId);
+      }
+      callKeepService.endCall(callId);
+    }
 
     if (Platform.OS === 'android') {
       try {
@@ -313,6 +348,14 @@ class NotificationService {
       }
     }
 
+    const idToDismiss = callId ? `call_${callId}` : this.currentCallNotificationId;
+    if (idToDismiss) {
+      try {
+        await Notifications.dismissNotificationAsync(idToDismiss);
+      } catch (err) {
+        // yut
+      }
+    }
     if (this.currentCallNotificationId) {
       try {
         await Notifications.dismissNotificationAsync(this.currentCallNotificationId);
