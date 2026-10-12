@@ -2,6 +2,7 @@ import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from '
 import {
   ActivityIndicator,
   Alert,
+  BackHandler,
   FlatList,
   Platform,
   Image,
@@ -66,6 +67,17 @@ export const RoomsListScreen: React.FC<RoomsListScreenProps> = ({
     });
   }, []);
 
+  // Donanım geri tuşuna basıldığında açık olan arama çubuğunu kapat
+  useEffect(() => {
+    if (!isSearchVisible) return;
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      setIsSearchVisible(false);
+      setSearchQuery('');
+      return true;
+    });
+    return () => sub.remove();
+  }, [isSearchVisible]);
+
   // Uzun basma menüsü
   const [selectedRoomForAction, setSelectedRoomForAction] = useState<Room | null>(null);
 
@@ -74,6 +86,8 @@ export const RoomsListScreen: React.FC<RoomsListScreenProps> = ({
   const {
     currentUserId,
     rooms,
+    isRoomsLoading,
+    hasLoadedRooms,
     fetchRooms,
     openDirect,
     togglePinRoom,
@@ -90,6 +104,8 @@ export const RoomsListScreen: React.FC<RoomsListScreenProps> = ({
       currentUserId: s.currentUser?.id,
       settings: s.settings,
       rooms: s.rooms,
+      isRoomsLoading: s.isRoomsLoading,
+      hasLoadedRooms: s.hasLoadedRooms,
       fetchRooms: s.fetchRooms,
       openDirect: s.openDirect,
       togglePinRoom: s.togglePinRoom,
@@ -404,19 +420,36 @@ export const RoomsListScreen: React.FC<RoomsListScreenProps> = ({
         windowSize={9}
         removeClippedSubviews={Platform.OS === 'android'}
         ListEmptyComponent={
-          <View style={styles.emptyContainer}>
-            <View style={styles.emptyIconCircle}>
-              <Ionicons
-                name="chatbubbles-outline"
-                size={40}
-                color={colors.primaryLight}
-              />
+          !hasLoadedRooms && isRoomsLoading ? (
+            <View style={styles.skeletonContainer}>
+              {[1, 2, 3, 4, 5, 6, 7].map((item) => (
+                <View key={item} style={styles.skeletonRow}>
+                  <View style={styles.skeletonAvatar} />
+                  <View style={styles.skeletonContent}>
+                    <View style={styles.skeletonHeader}>
+                      <View style={styles.skeletonTitle} />
+                      <View style={styles.skeletonTime} />
+                    </View>
+                    <View style={styles.skeletonSubtitle} />
+                  </View>
+                </View>
+              ))}
             </View>
-            <Text style={styles.emptyTitle}>Henüz Sohbet Yok</Text>
-            <Text style={styles.emptySubtitle}>
-              Kalem butonuna dokunarak yeni bir sohbet odası oluşturun veya bir arkadaşınıza mesaj atın.
-            </Text>
-          </View>
+          ) : hasLoadedRooms && rooms.length === 0 ? (
+            <View style={styles.emptyContainer}>
+              <View style={styles.emptyIconCircle}>
+                <Ionicons
+                  name="chatbubbles-outline"
+                  size={40}
+                  color={colors.primaryLight}
+                />
+              </View>
+              <Text style={styles.emptyTitle}>Henüz Sohbet Yok</Text>
+              <Text style={styles.emptySubtitle}>
+                Kalem butonuna dokunarak yeni bir sohbet odası oluşturun veya bir arkadaşınıza mesaj atın.
+              </Text>
+            </View>
+          ) : null
         }
       />
 
@@ -1218,6 +1251,50 @@ const styles = StyleSheet.create({
     fontSize: 15,
     color: colors.textPrimary,
     fontWeight: '500',
+  },
+  skeletonContainer: {
+    paddingVertical: 8,
+  },
+  skeletonRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+  },
+  skeletonAvatar: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    backgroundColor: 'rgba(255, 255, 255, 0.06)',
+    marginRight: 14,
+  },
+  skeletonContent: {
+    flex: 1,
+    justifyContent: 'center',
+  },
+  skeletonHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  skeletonTitle: {
+    width: '45%',
+    height: 14,
+    borderRadius: 7,
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+  },
+  skeletonTime: {
+    width: '15%',
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: 'rgba(255, 255, 255, 0.04)',
+  },
+  skeletonSubtitle: {
+    width: '75%',
+    height: 12,
+    borderRadius: 6,
+    backgroundColor: 'rgba(255, 255, 255, 0.04)',
   },
   emptyContainer: {
     alignItems: 'center',

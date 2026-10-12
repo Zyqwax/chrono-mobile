@@ -476,8 +476,40 @@ export default function ProfileScreen() {
             />
           </View>
 
+          {/* Aramalar */}
+          <View style={[styles.itemRow, styles.itemRowBorder]}>
+            <View style={styles.iconBox}>
+              <Ionicons name="call-outline" size={18} color="#38BDF8" />
+            </View>
+            <View style={styles.itemTextContainer}>
+              <Text style={styles.itemTitle}>Aramalar</Text>
+            </View>
+            <Switch
+              value={settings?.notifyCalls ?? true}
+              onValueChange={(val) => updateSettings({ notifyCalls: val })}
+              trackColor={{ false: '#334155', true: '#2563EB' }}
+              thumbColor="#FFFFFF"
+            />
+          </View>
+
+          {/* Mesaj önizlemesi */}
+          <View style={[styles.itemRow, styles.itemRowBorder]}>
+            <View style={styles.iconBox}>
+              <Ionicons name="eye-outline" size={18} color="#38BDF8" />
+            </View>
+            <View style={styles.itemTextContainer}>
+              <Text style={styles.itemTitle}>Mesaj önizlemesi</Text>
+            </View>
+            <Switch
+              value={settings?.messagePreview ?? true}
+              onValueChange={(val) => updateSettings({ messagePreview: val })}
+              trackColor={{ false: '#334155', true: '#2563EB' }}
+              thumbColor="#FFFFFF"
+            />
+          </View>
+
           {/* Uygulama içi sesler */}
-          <View style={styles.itemRow}>
+          <View style={[styles.itemRow, styles.itemRowBorder]}>
             <View style={styles.iconBox}>
               <Ionicons name="volume-medium-outline" size={18} color="#38BDF8" />
             </View>
@@ -487,6 +519,22 @@ export default function ProfileScreen() {
             <Switch
               value={settings?.inAppSounds ?? true}
               onValueChange={(val) => updateSettings({ inAppSounds: val })}
+              trackColor={{ false: '#334155', true: '#2563EB' }}
+              thumbColor="#FFFFFF"
+            />
+          </View>
+
+          {/* Titreşim */}
+          <View style={styles.itemRow}>
+            <View style={styles.iconBox}>
+              <Ionicons name="phone-portrait-outline" size={18} color="#38BDF8" />
+            </View>
+            <View style={styles.itemTextContainer}>
+              <Text style={styles.itemTitle}>Titreşim</Text>
+            </View>
+            <Switch
+              value={settings?.inAppVibrate ?? true}
+              onValueChange={(val) => updateSettings({ inAppVibrate: val })}
               trackColor={{ false: '#334155', true: '#2563EB' }}
               thumbColor="#FFFFFF"
             />

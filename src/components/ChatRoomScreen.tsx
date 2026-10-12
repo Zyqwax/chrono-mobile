@@ -3,6 +3,7 @@ import {
   ActivityIndicator,
   Alert,
   Animated,
+  BackHandler,
   Image,
   ImageBackground,
   Keyboard,
@@ -86,6 +87,20 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({ room, onBack }) 
       hideSub.remove();
     };
   }, []);
+
+  // Donanım geri tuşuna basıldığında mesaj yanıtlama veya düzenleme modundan çık
+  useEffect(() => {
+    if (!replyMessage && !editingMessage) return;
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (replyMessage) setReplyMessage(null);
+      if (editingMessage) {
+        setEditingMessage(null);
+        setInputText('');
+      }
+      return true;
+    });
+    return () => sub.remove();
+  }, [replyMessage, editingMessage]);
 
   // Sığ (shallow) seçici: yalnızca bu ekranın kullandığı aksiyonlar ve profil değişince render olur
   const {

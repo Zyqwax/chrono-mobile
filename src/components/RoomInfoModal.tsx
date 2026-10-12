@@ -47,11 +47,20 @@ export const RoomInfoModal: React.FC<RoomInfoModalProps> = ({
     settings,
     fetchRooms,
     deleteRoom,
+    toggleMuteRoom,
     startCall,
     joinRoomVoice,
     uploadRoomIcon,
     removeRoomIcon,
   } = useChatStore();
+
+  const storeRoom = useChatStore((s) => s.rooms.find((r) => r.id === roomId));
+
+  useEffect(() => {
+    if (storeRoom?.isMuted !== undefined) {
+      setIsMuted(Boolean(storeRoom.isMuted));
+    }
+  }, [storeRoom?.isMuted]);
 
   useEffect(() => {
     if (visible && roomId) {
@@ -71,6 +80,12 @@ export const RoomInfoModal: React.FC<RoomInfoModalProps> = ({
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleToggleMute = async () => {
+    const next = !isMuted;
+    setIsMuted(next);
+    await toggleMuteRoom(roomId);
   };
 
   const isDirect = room?.type === 'DIRECT';
@@ -250,9 +265,20 @@ export const RoomInfoModal: React.FC<RoomInfoModalProps> = ({
   const emojiMatch = !isDirect && room?.name ? room.name.match(/^(\p{Emoji})/u) : null;
   const roomEmoji = emojiMatch ? emojiMatch[0] : '🔥';
   const cleanRoomName = emojiMatch ? room?.name?.replace(emojiMatch[0], '').trim() : room?.name;
+  const handleRequestClose = () => {
+    if (addMemberVisible) {
+      setAddMemberVisible(false);
+      return;
+    }
+    if (editingName) {
+      setEditingName(false);
+      return;
+    }
+    onClose();
+  };
 
   return (
-    <Modal visible={visible} animationType="slide">
+    <Modal visible={visible} animationType="slide" onRequestClose={handleRequestClose}>
       <View style={styles.overlay}>
         <SafeAreaView style={styles.container}>
           {/* Navigation Bar */}
@@ -465,7 +491,7 @@ export const RoomInfoModal: React.FC<RoomInfoModalProps> = ({
 
                 <TouchableOpacity
                   style={styles.actionPillBtn}
-                  onPress={() => setIsMuted(!isMuted)}
+                  onPress={handleToggleMute}
                   activeOpacity={0.75}
                 >
                   <Ionicons

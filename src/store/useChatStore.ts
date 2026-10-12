@@ -22,6 +22,13 @@ import { requestCallPermissions } from '../services/permissions';
 
 const STORAGE_TOKEN_KEY = '@chrono_auth_token';
 const STORAGE_USER_KEY = '@chrono_auth_user';
+const STORAGE_ROOMS_KEY = '@chrono_rooms_cache';
+
+const persistRooms = (rooms: Room[]) => {
+  AsyncStorage.setItem(STORAGE_ROOMS_KEY, JSON.stringify(rooms)).catch((err) => {
+    console.warn('Failed to cache rooms:', err);
+  });
+};
 
 interface ChatStore {
   // Auth & Profile state
@@ -55,6 +62,8 @@ interface ChatStore {
 
   // Rooms state
   rooms: Room[];
+  isRoomsLoading: boolean;
+  hasLoadedRooms: boolean;
   setRooms: (rooms: Room[]) => void;
   activeRoom: Room | null;
   setActiveRoom: (room: Room | null) => void;
@@ -130,15 +139,42 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         })
         .catch(console.warn);
 
-      const [token, userStr] = await Promise.all([
+      const [token, userStr, cachedRoomsStr] = await Promise.all([
         AsyncStorage.getItem(STORAGE_TOKEN_KEY),
         AsyncStorage.getItem(STORAGE_USER_KEY),
+        AsyncStorage.getItem(STORAGE_ROOMS_KEY),
       ]);
+
+      // 2. Önbellekteki sohbetleri anında belleğe yükle (0 ms gecikme, boş ekran/parlama yok)
+      if (cachedRoomsStr) {
+        try {
+          const cachedRooms = JSON.parse(cachedRoomsStr) as Room[];
+          if (Array.isArray(cachedRooms) && cachedRooms.length > 0) {
+            set((state) => {
+              const updatedRoomMessages = { ...state.roomMessages };
+              for (const r of cachedRooms) {
+                if (r.lastMessage && (!updatedRoomMessages[r.id] || updatedRoomMessages[r.id].length === 0)) {
+                  updatedRoomMessages[r.id] = [r.lastMessage];
+                }
+              }
+              return {
+                rooms: cachedRooms,
+                roomMessages: updatedRoomMessages,
+                hasLoadedRooms: true,
+              };
+            });
+            console.log(`⚡ [Cache] ${cachedRooms.length} sohbet önbellekten anında yüklendi.`);
+          }
+        } catch (e) {
+          console.warn('Önbellekten sohbetler yüklenemedi:', e);
+        }
+      }
 
       if (token && userStr) {
         const user = JSON.parse(userStr) as User;
         get().setAuth(user, token);
-        // Sunucudan en güncel profil ve ayarları çek
+        // Sunucudan en güncel oda listesini, profili ve ayarları hemen arka planda çek
+        get().fetchRooms().catch(() => undefined);
         get().fetchMe().catch(() => undefined);
         get().fetchSettings().catch(() => undefined);
         get().syncPushToken().catch(console.warn);
@@ -234,26 +270,50 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         }
 
         // Sohbet listesindeki son mesaj ve okunmamış sayısını güncelle
-        set({
-          rooms: rooms.map((r) => {
-            if (r.id === message.roomId) {
-              const isCurrentOpen = activeRoom?.id === r.id;
-              const isMine = message.senderId === get().currentUser?.id;
-              return {
-                ...r,
-                lastMessage: message,
-                lastMessageAt: message.createdAt,
-                unreadCount: isCurrentOpen || isMine ? r.unreadCount : (r.unreadCount || 0) + 1,
-              };
-            }
-            return r;
-          }),
+        const nextRooms = rooms.map((r) => {
+          if (r.id === message.roomId) {
+            const isCurrentOpen = activeRoom?.id === r.id;
+            const isMine = message.senderId === get().currentUser?.id;
+            return {
+              ...r,
+              lastMessage: message,
+              lastMessageAt: message.createdAt,
+              unreadCount: isCurrentOpen || isMine ? r.unreadCount : (r.unreadCount || 0) + 1,
+            };
+          }
+          return r;
         });
+        set({ rooms: nextRooms });
+        persistRooms(nextRooms);
 
         // Başkasından gelen mesajlarda bildirim göster (aktif olarak o odada değilsek)
         const myId = get().currentUser?.id;
         if (message.senderId !== myId && activeRoom?.id !== message.roomId) {
-          const senderName = message.sender?.displayName || message.sender?.username || 'Yeni Mesaj';
+          const targetRoom = get().rooms.find((r) => r.id === message.roomId);
+          const isMuted = Boolean(
+            targetRoom?.isMuted ||
+              (targetRoom?.mutedUntil && new Date(targetRoom.mutedUntil) > new Date()),
+          );
+
+          // 1. ODA SESSİZE ALINMIŞSA: Bildirim ve ses KESİNLİKLE gösterme / çalma!
+          if (isMuted) {
+            return;
+          }
+
+          // 2. KULLANICI BİLDİRİM AYARLARI KONTROLÜ
+          const { settings } = get();
+          const isDirect = targetRoom?.type === 'DIRECT';
+          if (isDirect && settings?.notifyPrivate === false) {
+            return;
+          }
+          if (!isDirect && targetRoom && settings?.notifyRooms === false) {
+            return;
+          }
+
+          const senderName =
+            message.sender?.displayName || message.sender?.username || 'Yeni Mesaj';
+          const playSound = settings?.inAppSounds ?? true;
+          const allowPreview = settings?.messagePreview ?? true;
 
           // Arama geçmişi bildirimlerini filtrele ve düzenle
           if (message.type === 'CALL') {
@@ -279,7 +339,12 @@ export const useChatStore = create<ChatStore>((set, get) => ({
                 const callText = callData.video
                   ? '📹 Cevapsız görüntülü arama'
                   : '📞 Cevapsız sesli arama';
-                notificationService.showMessageNotification(senderName, callText, message.roomId);
+                notificationService.showMessageNotification(
+                  senderName,
+                  callText,
+                  message.roomId,
+                  { playSound },
+                );
               }
             } catch {
               // yut
@@ -288,11 +353,21 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           }
 
           if (message.type === 'IMAGE') {
-            notificationService.showMessageNotification(senderName, '📷 Fotoğraf', message.roomId);
+            notificationService.showMessageNotification(
+              senderName,
+              allowPreview ? '📷 Fotoğraf' : 'Yeni bir fotoğraf',
+              message.roomId,
+              { playSound },
+            );
             return;
           }
 
-          notificationService.showMessageNotification(senderName, message.content, message.roomId);
+          notificationService.showMessageNotification(
+            senderName,
+            allowPreview ? message.content : 'Yeni bir mesajınız var',
+            message.roomId,
+            { playSound },
+          );
         }
       });
 
@@ -505,6 +580,10 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       // 9. DM Arama Olayları
       socket.on('call_incoming', (call: IncomingCall) => {
         set({ activeCall: call });
+        const { settings } = get();
+        if (settings?.notifyCalls === false) {
+          return;
+        }
         const callerName = call.caller?.displayName || call.caller?.username || 'Kullanıcı';
         notificationService.showCallNotification(callerName, call.video, call.callId);
       });
@@ -607,10 +686,13 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     setAuthToken(null);
     AsyncStorage.removeItem(STORAGE_TOKEN_KEY).catch(console.error);
     AsyncStorage.removeItem(STORAGE_USER_KEY).catch(console.error);
+    AsyncStorage.removeItem(STORAGE_ROOMS_KEY).catch(console.error);
     set({
       currentUser: null,
       token: null,
       rooms: [],
+      isRoomsLoading: false,
+      hasLoadedRooms: false,
       activeRoom: null,
       messages: [],
       roomMessages: {},
@@ -714,6 +796,10 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   },
 
   updateSettings: async (data) => {
+    const prevSettings = get().settings;
+    if (prevSettings) {
+      set({ settings: { ...prevSettings, ...data } });
+    }
     try {
       const res = await api.patch('/users/me/settings', data);
       const newSettings = res.data;
@@ -795,7 +881,12 @@ export const useChatStore = create<ChatStore>((set, get) => ({
 
   // Rooms
   rooms: [],
-  setRooms: (rooms) => set({ rooms }),
+  isRoomsLoading: false,
+  hasLoadedRooms: false,
+  setRooms: (rooms) => {
+    set({ rooms, hasLoadedRooms: true });
+    persistRooms(rooms);
+  },
   activeRoom: null,
 
   setActiveRoom: (room) => {
@@ -833,6 +924,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
 
   fetchRooms: async () => {
     if (!get().token) return;
+    set({ isRoomsLoading: true });
     try {
       const res = await api.get('/rooms');
       const rooms: Room[] = res.data;
@@ -843,9 +935,16 @@ export const useChatStore = create<ChatStore>((set, get) => ({
             updatedRoomMessages[r.id] = [r.lastMessage];
           }
         }
-        return { rooms, roomMessages: updatedRoomMessages };
+        return {
+          rooms,
+          roomMessages: updatedRoomMessages,
+          isRoomsLoading: false,
+          hasLoadedRooms: true,
+        };
       });
+      persistRooms(rooms);
     } catch (err: any) {
+      set({ isRoomsLoading: false, hasLoadedRooms: true });
       if (err?.response?.status === 401) {
         get().logout();
       } else {
@@ -880,10 +979,12 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   openDirect: async (userId: string) => {
     const res = await api.post('/rooms/direct', { userId });
     const directRoom = res.data as Room;
-    // Odayı listeye yerleştir
     const { rooms } = get();
-    if (!rooms.some((r) => r.id === directRoom.id)) {
-      set({ rooms: [directRoom, ...rooms] });
+    const exists = rooms.some((r) => r.id === directRoom.id);
+    if (!exists) {
+      const nextRooms = [directRoom, ...rooms];
+      set({ rooms: nextRooms });
+      persistRooms(nextRooms);
     }
     return directRoom;
   },
@@ -893,9 +994,11 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     if (!room) return;
     const isPinned = !room.isPinned;
     await api.patch(`/rooms/${roomId}/membership`, { isPinned });
-    set((state) => ({
-      rooms: state.rooms.map((r) => (r.id === roomId ? { ...r, isPinned } : r)),
-    }));
+    set((state) => {
+      const nextRooms = state.rooms.map((r) => (r.id === roomId ? { ...r, isPinned } : r));
+      persistRooms(nextRooms);
+      return { rooms: nextRooms };
+    });
   },
 
   toggleMuteRoom: async (roomId: string) => {
@@ -904,16 +1007,24 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     const isMuted = !room.isMuted;
     const mutedUntil = isMuted ? new Date(Date.now() + 365 * 24 * 3600 * 1000).toISOString() : null;
     await api.patch(`/rooms/${roomId}/membership`, { mutedUntil });
-    set((state) => ({
-      rooms: state.rooms.map((r) => (r.id === roomId ? { ...r, isMuted, mutedUntil } : r)),
-    }));
+    set((state) => {
+      const nextRooms = state.rooms.map((r) => (r.id === roomId ? { ...r, isMuted, mutedUntil } : r));
+      persistRooms(nextRooms);
+      const nextActive =
+        state.activeRoom?.id === roomId
+          ? { ...state.activeRoom, isMuted, mutedUntil }
+          : state.activeRoom;
+      return { rooms: nextRooms, activeRoom: nextActive };
+    });
   },
 
   deleteRoom: async (roomId: string, forEveryone = false) => {
     await api.delete(`/rooms/${roomId}`, { params: { forEveryone } });
-    set((state) => ({
-      rooms: state.rooms.filter((r) => r.id !== roomId),
-    }));
+    set((state) => {
+      const nextRooms = state.rooms.filter((r) => r.id !== roomId);
+      persistRooms(nextRooms);
+      return { rooms: nextRooms };
+    });
   },
 
   clearRoomHistory: async (roomId: string) => {
@@ -922,12 +1033,14 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     set((state) => {
       const nextRoomMessages = { ...state.roomMessages };
       delete nextRoomMessages[roomId];
+      const nextRooms = state.rooms.map((r) =>
+        r.id === roomId ? { ...r, lastMessage: null, unreadCount: 0 } : r,
+      );
+      persistRooms(nextRooms);
       return {
         roomMessages: nextRoomMessages,
         messages: state.activeRoom?.id === roomId ? [] : state.messages,
-        rooms: state.rooms.map((r) =>
-          r.id === roomId ? { ...r, lastMessage: null, unreadCount: 0 } : r,
-        ),
+        rooms: nextRooms,
       };
     });
   },

@@ -176,8 +176,15 @@ class NotificationService {
   }
 
   // Sohbet odasından yeni mesaj geldiğinde bildirim göster (WhatsApp stili stackleme)
-  async showMessageNotification(senderName: string, text: string, roomId: string) {
+  async showMessageNotification(
+    senderName: string,
+    text: string,
+    roomId: string,
+    options?: { playSound?: boolean },
+  ) {
     try {
+      const playSound = options?.playSound ?? true;
+
       // Eğer arama JSON objesi geldiyse bildirim olarak ham JSON gösterme
       let displayText = text;
       if (typeof text === 'string' && text.trim().startsWith('{') && text.includes('"status"')) {
@@ -217,9 +224,11 @@ class NotificationService {
           title: senderName,
           body: notificationBody,
           data: { roomId, type: 'message' },
-          sound: true,
+          sound: playSound,
           color: '#38BDF8',
-          ...(Platform.OS === 'android' ? { channelId: 'chat-messages' } : {}),
+          ...(Platform.OS === 'android'
+            ? { channelId: playSound ? 'chat-messages' : 'silent_channel' }
+            : {}),
           ...(Platform.OS === 'ios' ? { threadIdentifier: `room_${roomId}` } : {}),
         },
         trigger: null, // Hemen göster
