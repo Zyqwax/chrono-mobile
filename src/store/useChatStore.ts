@@ -109,6 +109,7 @@ interface ChatStore {
 
   // DM Arama state
   activeCall: IncomingCall | null;
+  setActiveCall: (call: IncomingCall | null) => void;
   startCall: (roomId: string, video?: boolean) => Promise<void>;
   acceptCall: (callId: string) => Promise<void>;
   declineCall: (callId: string) => Promise<void>;
@@ -302,7 +303,6 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         });
         set({ rooms: nextRooms });
         persistRooms(nextRooms);
-
     });
 
       // 2. Mesaj güncellendiğinde (düzenlendi veya silindi)
@@ -1519,11 +1519,18 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       socket.emit('call_accept', { callId });
     }
   },
+  setActiveCall: (call: IncomingCall | null) => set({ activeCall: call }),
 
   declineCall: async (callId: string) => {
     const socket = getSocket();
     if (socket && socket.connected) {
       socket.emit('call_decline', { callId });
+    } else {
+      try {
+        await api.post(`/calls/${callId}/decline`);
+      } catch (e) {
+        console.warn('REST call decline failed:', e);
+      }
     }
     notificationService.dismissCallNotification(callId);
     set({ activeCall: null });

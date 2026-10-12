@@ -2,14 +2,94 @@ import { PermissionsAndroid, Platform } from 'react-native';
 import notifee, {
   AndroidForegroundServiceType,
   AndroidImportance,
+  Event,
   EventType,
 } from '@notifee/react-native';
+import { useChatStore } from '../store/useChatStore';
+import { callSoundService } from './sound';
+import { callKeepService } from './callkeep';
 
 export const CALL_FG_CHANNEL_ID = 'ongoing-call-channel';
 export const CALL_NOTIFICATION_ID = 'active_call_notif';
 
 type CallPressListener = () => void;
 const pressListeners = new Set<CallPressListener>();
+
+/**
+ * Notifee ön plan ve arka plan bildirim olaylarını (Cevapla/Reddet aksiyonları, tıklamalar) tek merkezden yönetir.
+ */
+export async function handleNotifeeEvent({ type, detail }: Event) {
+  const { notification, pressAction } = detail;
+  const pressActionId = pressAction?.id;
+  const data = notification?.data;
+  const callId =
+    (data?.callId as string) ||
+    (notification?.id?.startsWith('call_')
+      ? notification.id.replace('call_', '')
+      : undefined);
+
+  if (type === EventType.ACTION_PRESS) {
+    if (pressActionId === 'answer_call') {
+      console.log('📞 [Notifee Action] answer_call tıklandı, callId:', callId);
+      void callSoundService.stopAll();
+      if (callId) {
+        if (notification?.id) {
+          await notifee.cancelNotification(notification.id).catch(() => {});
+        }
+        await notifee.cancelNotification(`call_${callId}`).catch(() => {});
+        callKeepService.reportConnectedCall(callId);
+
+        const chatStore = useChatStore.getState();
+        if (!chatStore.activeCall && data) {
+          const isVideo = (data.video as any) === true || String(data.video) === 'true';
+          const currentUser = chatStore.currentUser || {
+            id: '',
+            username: 'Ben',
+            displayName: 'Ben',
+          };
+          chatStore.setActiveCall({
+            callId,
+            roomId: (data.roomId as string) || '',
+            caller: {
+              id: '',
+              username: (data.callerName as string) || 'Kullanıcı',
+              displayName: (data.callerName as string) || 'Kullanıcı',
+            },
+            callee: currentUser,
+            video: isVideo,
+            state: 'ringing',
+            startedAt: Date.now(),
+            mediaRoom: (data.roomId as string) ? `call_${data.roomId}` : `call_${callId}`,
+          });
+        }
+        await chatStore.acceptCall(callId);
+      }
+      // Uygulamayı arama modalına yönlendir
+      pressListeners.forEach((listener) => {
+        try {
+          listener();
+        } catch {}
+      });
+    } else if (pressActionId === 'decline_call') {
+      console.log('📞 [Notifee Action] decline_call tıklandı, callId:', callId);
+      void callSoundService.stopAll();
+      if (callId) {
+        if (notification?.id) {
+          await notifee.cancelNotification(notification.id).catch(() => {});
+        }
+        await notifee.cancelNotification(`call_${callId}`).catch(() => {});
+        await useChatStore.getState().declineCall(callId);
+      }
+    }
+  } else if (type === EventType.PRESS) {
+    console.log('📱 [Notifee Event] Bildirime tıklandı (PRESS)');
+    pressListeners.forEach((listener) => {
+      try {
+        listener();
+      } catch {}
+    });
+  }
+}
 
 // Android 14+ Foreground Service runner kaydı (Global dosya seviyesinde, component dışı)
 if (Platform.OS === 'android') {
@@ -24,29 +104,10 @@ if (Platform.OS === 'android') {
     console.warn('registerForegroundService kaydı hatası:', err);
   }
 
-  // Notifee background event dinleyicisi (uyarı loglarını önler)
+  // Ortak Notifee dinleyicileri (Arka plan ve ön plan olayları)
   try {
-    notifee.onBackgroundEvent(async () => {});
-  } catch {}
-
-  // Bildirime tıklandığında uygulamayı ve aktif görüşmeyi ön plana taşıma dinleyicisi
-  try {
-    notifee.onForegroundEvent(({ type, detail }) => {
-      if (
-        type === EventType.PRESS &&
-        (detail.notification?.id === CALL_NOTIFICATION_ID ||
-          detail.notification?.id === 'chrono_ongoing_call' ||
-          detail.notification?.data?.type === 'active_call')
-      ) {
-        pressListeners.forEach((listener) => {
-          try {
-            listener();
-          } catch {
-            // yut
-          }
-        });
-      }
-    });
+    notifee.onBackgroundEvent(handleNotifeeEvent);
+    notifee.onForegroundEvent(handleNotifeeEvent);
   } catch (err) {
     console.warn('Notifee event dinleyicisi hatası:', err);
   }

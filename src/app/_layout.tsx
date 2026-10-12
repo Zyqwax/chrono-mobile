@@ -1,3 +1,4 @@
+import '../services/backgroundNotificationTask';
 import React, { useEffect } from 'react';
 import {
   ActivityIndicator,
@@ -7,7 +8,6 @@ import {
   StyleSheet,
   View,
 } from 'react-native';
-import notifee from '@notifee/react-native';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import * as Notifications from 'expo-notifications';
@@ -15,19 +15,6 @@ import { useChatStore } from '../store/useChatStore';
 import { ActiveCallModal } from '../components/ActiveCallModal';
 import { updateService } from '../services/updates';
 import { chronoTheme } from '../theme/colors';
-
-// Android 14+ Foreground Service runner kaydı (Kök dosya seviyesi, component dışı)
-if (Platform.OS === 'android') {
-  try {
-    notifee.registerForegroundService((_notification) => {
-      return new Promise(() => {
-        // Arama sürdüğü sürece bu promise resolve edilmez (servis arka planda canlı kalır).
-      });
-    });
-  } catch (err) {
-    console.warn('Root registerForegroundService kaydı hatası:', err);
-  }
-}
 
 const { colors } = chronoTheme;
 
