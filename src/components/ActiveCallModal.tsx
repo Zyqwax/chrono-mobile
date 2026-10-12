@@ -71,7 +71,16 @@ export const ActiveCallModal: React.FC = () => {
   useEffect(() => {
     callKeepService.setup({
       onAnswerCall: (callId) => acceptCall(callId),
-      onEndCall: (callId) => endCall(callId),
+      onEndCall: (callId) => {
+        const current = useChatStore.getState().activeCall;
+        if (current?.callId === callId) {
+          if (current.state === 'active') {
+            endCall(callId);
+          } else if (current.state === 'ringing') {
+            declineCall(callId);
+          }
+        }
+      },
     });
   }, []);
 
@@ -125,7 +134,7 @@ export const ActiveCallModal: React.FC = () => {
     }
   }, [activeCall, isIncoming, isOutgoing, isActive]);
 
-  // Arama zil sesleri (Giden arama: santral çalma sesi "düüüt...", Gelen arama: telefonun varsayılan sistem zil sesi + sürekli titreşim)
+  // Arama ses ve titreşimleri (Giden arama: santral çalma sesi "düüüt...", Gelen arama: telefonun kesintisiz titreşimi ve sistem zil sesi)
   useEffect(() => {
     if (activeCall?.state === 'ringing') {
       if (isOutgoing) {
@@ -134,14 +143,9 @@ export const ActiveCallModal: React.FC = () => {
           callSoundService.stopAll();
         };
       } else if (isIncoming) {
-        // Gelen aramada telefonun varsayılan sistem zil sesi Notifee üzerinden çalar.
-        // Ekranda da kesintisiz, sürekli titreşim döngüsü çalışır.
+        // Gelen aramada kesintisiz, sürekli titreşim döngüsü çalışır.
         Vibration.vibrate([0, 1000, 800, 1000], true);
-        const vibInterval = setInterval(() => {
-          Vibration.vibrate([0, 1000, 800, 1000], true);
-        }, 2800);
         return () => {
-          clearInterval(vibInterval);
           Vibration.cancel();
           callSoundService.stopAll();
         };

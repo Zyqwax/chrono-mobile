@@ -141,13 +141,22 @@ class NotificationService {
           showBadge: true,
         });
 
-        // 2. Gelen Arama Bildirim Kanalı (En yüksek öncelik / Heads-up)
-        await Notifications.setNotificationChannelAsync('calls_channel', {
+        // 2. Gelen Arama Bildirim Kanalı (En yüksek öncelik / Heads-up / Zil Sesi Akışı)
+        await Notifications.setNotificationChannelAsync('calls_channel_v2', {
           name: 'Gelen Aramalar',
           importance: Notifications.AndroidImportance.MAX,
-          vibrationPattern: [0, 1000, 1000, 1000],
+          vibrationPattern: [0, 1000, 800, 1000],
           lightColor: '#10B981',
           enableVibrate: true,
+          sound: 'default',
+          audioAttributes: {
+            usage: Notifications.AndroidAudioUsage.NOTIFICATION_RINGTONE,
+            contentType: Notifications.AndroidAudioContentType.SONIFICATION,
+            flags: {
+              enforceAudibility: true,
+              requestHardwareAudioVideoSynchronization: false,
+            },
+          },
         });
 
         // 3. Canlı Sesli Arama Bildirim Kanalı (Sessiz, titreşimsiz, düşük önem düzeyi)
@@ -256,7 +265,7 @@ class NotificationService {
       if (Platform.OS === 'android') {
         try {
           await notifee.createChannel({
-            id: 'chrono_incoming_calls',
+            id: 'chrono_incoming_calls_v2',
             name: 'Gelen Aramalar',
             importance: AndroidImportance.HIGH,
             sound: 'default',
@@ -264,13 +273,13 @@ class NotificationService {
             vibrationPattern: [0, 1000, 800, 1000],
           });
 
-          await notifee.displayNotification({
+          const notifId = await notifee.displayNotification({
             id: `call_${callId}`,
             title: isVideo ? '📹 Gelen Görüntülü Arama' : '📞 Gelen Sesli Arama',
             body: `${callerName} sizi arıyor...`,
             data: { callId, type: 'call' },
             android: {
-              channelId: 'chrono_incoming_calls',
+              channelId: 'chrono_incoming_calls_v2',
               category: AndroidCategory.CALL,
               importance: AndroidImportance.HIGH,
               sound: 'default',
@@ -278,6 +287,7 @@ class NotificationService {
               ongoing: true,
               vibrationPattern: [0, 1000, 800, 1000],
               pressAction: { id: 'default', launchActivity: 'default' },
+              fullScreenAction: { id: 'default', launchActivity: 'default' },
               actions: [
                 {
                   title: 'Cevapla',
@@ -290,20 +300,23 @@ class NotificationService {
               ],
             },
           });
+          this.currentCallNotificationId = notifId;
+          return;
         } catch (e) {
           console.warn('Notifee arama bildirimi hatası:', e);
         }
       }
 
+      // iOS ve fallback ortamlar için expo-notifications
       const id = await Notifications.scheduleNotificationAsync({
         content: {
           title: isVideo ? '📹 Gelen Görüntülü Arama' : '📞 Gelen Sesli Arama',
           body: `${callerName} sizi arıyor...`,
           data: { callId, type: 'call' },
-          sound: true,
+          sound: 'default',
           color: '#10B981',
           priority: Notifications.AndroidNotificationPriority.MAX,
-          ...(Platform.OS === 'android' ? { channelId: 'calls_channel' } : {}),
+          ...(Platform.OS === 'android' ? { channelId: 'calls_channel_v2' } : {}),
         },
         trigger: null,
       });
@@ -321,6 +334,9 @@ class NotificationService {
       try {
         if (callId) {
           await notifee.cancelNotification(`call_${callId}`);
+        }
+        if (this.currentCallNotificationId) {
+          await notifee.cancelNotification(this.currentCallNotificationId);
         }
         await notifee.cancelNotification('call_notif');
       } catch {

@@ -39,7 +39,8 @@ class CallKeepService {
           cancelButton: 'İptal',
           okButton: 'Tamam',
           imageName: 'ic_launcher',
-          additionalPermissions: [],
+          selfManaged: true,
+          additionalPermissions: ['android.permission.READ_PHONE_STATE', 'android.permission.CALL_PHONE'],
           foregroundService: {
             channelId: 'chrono_calls',
             channelName: 'Chrono Aramalar',
@@ -51,6 +52,15 @@ class CallKeepService {
 
       await RNCallKeep.setup(options);
       RNCallKeep.setAvailable(true);
+
+      if (Platform.OS === 'android') {
+        try {
+          RNCallKeep.registerPhoneAccount();
+          RNCallKeep.registerAndroidEvents();
+        } catch (e) {
+          console.warn('CallKeep registerPhoneAccount error:', e);
+        }
+      }
 
       RNCallKeep.addEventListener('answerCall', ({ callUUID }: { callUUID: string }) => {
         callbacks.onAnswerCall(callUUID);
@@ -67,6 +77,25 @@ class CallKeepService {
     }
   }
 
+  async hasPhoneAccount(): Promise<boolean> {
+    if (Platform.OS !== 'android' || !isCallKeepAvailable || !RNCallKeep) return true;
+    try {
+      return await RNCallKeep.hasPhoneAccount();
+    } catch {
+      return false;
+    }
+  }
+
+  openPhoneAccounts() {
+    if (Platform.OS === 'android' && isCallKeepAvailable && RNCallKeep) {
+      try {
+        RNCallKeep.openPhoneAccounts();
+      } catch (e) {
+        console.warn('openPhoneAccounts error:', e);
+      }
+    }
+  }
+
   displayIncomingCall(callId: string, callerName: string, hasVideo = false) {
     if (!isCallKeepAvailable || !RNCallKeep) return;
     try {
@@ -74,7 +103,7 @@ class CallKeepService {
         callId,
         callerName,
         callerName,
-        'generic',
+        'number',
         hasVideo,
       );
     } catch (err) {
@@ -85,7 +114,7 @@ class CallKeepService {
   startOutgoingCall(callId: string, calleeName: string, hasVideo = false) {
     if (!isCallKeepAvailable || !RNCallKeep) return;
     try {
-      RNCallKeep.startCall(callId, calleeName, calleeName, 'generic', hasVideo);
+      RNCallKeep.startCall(callId, calleeName, calleeName, 'number', hasVideo);
     } catch (err) {
       console.warn('CallKeep giden arama hatası:', err);
     }

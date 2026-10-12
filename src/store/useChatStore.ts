@@ -19,6 +19,7 @@ import {
 import { liveKitService } from '../services/livekit';
 import { localDb } from '../services/localDb';
 import { requestCallPermissions } from '../services/permissions';
+import { callKeepService } from '../services/callkeep';
 
 const STORAGE_TOKEN_KEY = '@chrono_auth_token';
 const STORAGE_USER_KEY = '@chrono_auth_user';
@@ -179,6 +180,19 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         get().fetchSettings().catch(() => undefined);
         get().syncPushToken().catch(console.warn);
         notificationService.init().catch(console.warn);
+        callKeepService.setup({
+          onAnswerCall: (callId) => get().acceptCall(callId),
+          onEndCall: (callId) => {
+            const current = get().activeCall;
+            if (current?.callId === callId) {
+              if (current.state === 'active') {
+                get().endCall(callId);
+              } else if (current.state === 'ringing') {
+                get().declineCall(callId);
+              }
+            }
+          },
+        }).catch(console.warn);
       } else {
         notificationService.init().catch(console.warn);
       }
@@ -585,6 +599,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           return;
         }
         const callerName = call.caller?.displayName || call.caller?.username || 'Kullanıcı';
+        callKeepService.displayIncomingCall(call.callId, callerName, call.video);
         notificationService.showCallNotification(callerName, call.video, call.callId);
       });
 
