@@ -148,7 +148,7 @@ class NotificationService {
           vibrationPattern: [0, 1000, 800, 1000],
           lightColor: '#10B981',
           enableVibrate: true,
-          sound: 'default',
+          sound: undefined,
           audioAttributes: {
             usage: Notifications.AndroidAudioUsage.NOTIFICATION_RINGTONE,
             contentType: Notifications.AndroidAudioContentType.SONIFICATION,
@@ -268,7 +268,7 @@ class NotificationService {
             id: 'chrono_incoming_calls_v2',
             name: 'Gelen Aramalar',
             importance: AndroidImportance.HIGH,
-            sound: 'default',
+            sound: undefined,
             vibration: true,
             vibrationPattern: [0, 1000, 800, 1000],
           });
@@ -313,7 +313,7 @@ class NotificationService {
           title: isVideo ? '📹 Gelen Görüntülü Arama' : '📞 Gelen Sesli Arama',
           body: `${callerName} sizi arıyor...`,
           data: { callId, type: 'call' },
-          sound: 'default',
+          sound: true,
           color: '#10B981',
           priority: Notifications.AndroidNotificationPriority.MAX,
           ...(Platform.OS === 'android' ? { channelId: 'calls_channel_v2' } : {}),
@@ -398,8 +398,8 @@ class NotificationService {
         await foregroundServiceManager.stopCallForegroundService();
       }
       await Notifications.dismissNotificationAsync('active_voice_call');
-      await Notifications.dismissNotificationAsync('active_call_notif').catch(() => {});
-      await Notifications.dismissNotificationAsync('chrono_ongoing_call').catch(() => {});
+      await Notifications.dismissNotificationAsync('active_call_notif').catch(() => { });
+      await Notifications.dismissNotificationAsync('chrono_ongoing_call').catch(() => { });
     } catch (err) {
       // yut
     }

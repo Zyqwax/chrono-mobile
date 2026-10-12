@@ -18,6 +18,7 @@ import { VideoView } from '@livekit/react-native';
 
 import { Ionicons } from '@expo/vector-icons';
 import * as Notifications from 'expo-notifications';
+import { ChronoAvatar } from './ChronoAvatar';
 import { useChatStore } from '../store/useChatStore';
 import { api } from '../services/api';
 import { chronoTheme } from '../theme/colors';
@@ -367,7 +368,7 @@ export const ActiveCallModal: React.FC = () => {
         ) : null}
 
         <SafeAreaView style={styles.safeContent} edges={['top', 'bottom', 'left', 'right']}>
-          {/* Üst Bilgi Barı */}
+          {/* Üst Başlık Çubuğu */}
           <View style={styles.topHeader}>
             <TouchableOpacity
               style={styles.minimizeBtn}
@@ -378,28 +379,28 @@ export const ActiveCallModal: React.FC = () => {
               <Ionicons name="chevron-down" size={24} color="#FFFFFF" />
             </TouchableOpacity>
 
-            <View style={styles.callTypePill}>
-              <Ionicons
-                name={isVideoCall ? 'videocam' : 'call'}
-                size={14}
-                color={colors.primaryLight}
-              />
-              <Text style={styles.callTypeText}>
-                {isVideoCall ? 'GÖRÜNTÜLÜ ARAMA' : 'SESLİ ARAMA'}
-              </Text>
-            </View>
-
-            {isActive ? (
-              <View style={styles.activeDurationBadge}>
+            {isVideoCall && isActive ? (
+              <View style={styles.videoDurationPill}>
                 <View style={styles.greenLiveDot} />
-                <Text style={styles.durationText}>{formatDuration(callDuration)}</Text>
+                <Text style={styles.videoDurationText}>{formatDuration(callDuration)}</Text>
               </View>
             ) : (
-              <View style={{ width: 38 }} />
+              <View style={styles.callTypePill}>
+                <Ionicons
+                  name={isVideoCall ? 'videocam-outline' : 'call-outline'}
+                  size={15}
+                  color="#38BDF8"
+                />
+                <Text style={styles.callTypeText}>
+                  {isVideoCall ? 'Görüntülü arama' : 'Sesli arama'}
+                </Text>
+              </View>
             )}
+
+            <View style={{ width: 40 }} />
           </View>
 
-          {/* Kendi Kameramızın Canlı Önizlemesi (PiP - Sağ Üstte Yüzen Kart) */}
+          {/* Kendi Kameramızın Canlı Önizlemesi (PiP - Sağ Üstte Yüzen Kart - Ekran 3) */}
           {isVideoCall && isActive && isVideoOn && (
             <View style={styles.pipContainer}>
               {videoTracks.local ? (
@@ -412,7 +413,7 @@ export const ActiveCallModal: React.FC = () => {
                 />
               ) : (
                 <View style={styles.pipPlaceholder}>
-                  <Ionicons name="videocam" size={22} color={colors.primaryLight} />
+                  <Ionicons name="videocam" size={24} color={colors.primaryLight} />
                   <Text style={styles.pipPlaceholderText}>Kamera Açık</Text>
                 </View>
               )}
@@ -430,74 +431,106 @@ export const ActiveCallModal: React.FC = () => {
 
           {/* Sesli arama veya uzak kamera henüz yoksa merkez içerik */}
           {(!isVideoCall || !isActive || !videoTracks.remote) && (
-            <View style={styles.centerContent}>
-              <Animated.View
-                style={[
-                  styles.avatarRing,
-                  activeCall.state === 'ringing' && {
-                    transform: [{ scale: pulseAnim }],
-                  },
-                ]}
-              >
-                {otherUser?.avatarUrl ? (
-                  <Image source={{ uri: otherUser.avatarUrl }} style={styles.avatarImage} />
-                ) : (
-                  <View style={styles.avatarPlaceholder}>
-                    <Text style={styles.avatarLetter}>
-                      {otherName.charAt(0).toUpperCase()}
-                    </Text>
-                  </View>
-                )}
-              </Animated.View>
+            <View style={styles.centerSection}>
+              {/* Radar ve Avatar Kapsayıcısı - Tamamen aynı merkez noktasına kilitli */}
+              <View style={styles.avatarRadarBox}>
+                {/* 1. Dış En Büyük Radar Çemberi (330x330) */}
+                <View style={styles.radarRingOuter} />
 
-              <Text style={styles.callerName}>{otherName}</Text>
+                {/* 2. Orta Radar Çemberi (234x234, top/left: 48) */}
+                <View style={styles.radarRingMid} />
 
-              {/* Durum Metni */}
-              <View style={styles.statusRow}>
-                {isActive ? (
-                  isVideoCall && !videoTracks.remote ? (
-                    <View style={styles.videoWaitingBadge}>
-                      <Ionicons name="videocam-outline" size={16} color={colors.primaryLight} />
-                      <Text style={styles.videoWaitingText}>
-                        Karşı tarafın kamera görüntüsü bekleniyor...
+                {/* 3. Tam Merkezdeki Avatar Çemberi & Fotoğrafı (140x140, top/left: 95) */}
+                <View style={styles.avatarWrapper}>
+                  {/* İç Zemin & Fotoğraf veya Harf */}
+                  <View style={styles.avatarDisc}>
+                    {otherUser?.avatarUrl ? (
+                      <Image source={{ uri: otherUser.avatarUrl }} style={styles.avatarImage} />
+                    ) : (
+                      <Text
+                        style={[
+                          styles.avatarInitialLetter,
+                          { color: isActive ? '#34D399' : '#60A5FA' },
+                        ]}
+                      >
+                        {otherName.trim().charAt(0).toUpperCase()}
                       </Text>
-                    </View>
-                  ) : (
-                    <View style={styles.activeDurationBadge}>
-                      <View style={styles.greenLiveDot} />
-                      <Text style={styles.durationText}>{formatDuration(callDuration)}</Text>
-                    </View>
-                  )
-                ) : (
-                  <Text style={styles.ringingStatusText}>
-                    {isIncoming ? 'Gelen Arama...' : 'Çalıyor...'}
-                  </Text>
-                )}
+                    )}
+                  </View>
+
+                  {/* Sönük arka plan iz halkası */}
+                  <View style={styles.avatarTrackRing} pointerEvents="none" />
+
+                  {/* Renkli Çember Yayı (Çalarken Mavi, Bağlıyken Yeşil) */}
+                  <View
+                    style={[
+                      styles.avatarArcRing,
+                      { borderColor: isActive ? '#10B981' : '#2563EB', borderRightColor: 'transparent' },
+                    ]}
+                    pointerEvents="none"
+                  />
+
+                  {/* Çemberin Sağ Boşluğundaki 3 İkonik Chrono Noktası */}
+                  <View
+                    style={[
+                      styles.avatarDotTop,
+                      { backgroundColor: isActive ? '#10B981' : '#2563EB' },
+                    ]}
+                    pointerEvents="none"
+                  />
+                  <View
+                    style={[
+                      styles.avatarDotMid,
+                      { backgroundColor: isActive ? '#10B981' : '#2563EB' },
+                    ]}
+                    pointerEvents="none"
+                  />
+                  <View
+                    style={[
+                      styles.avatarDotBottom,
+                      { backgroundColor: isActive ? '#10B981' : '#2563EB' },
+                    ]}
+                    pointerEvents="none"
+                  />
+                </View>
               </View>
 
-              {/* LiveKit Medya Durumu Bilgisi */}
-              {isActive && (
-                <View style={styles.livekitBadge}>
-                  {livekitLoading ? (
-                    <View style={styles.livekitRow}>
-                      <ActivityIndicator size="small" color={colors.primaryLight} />
-                      <Text style={styles.livekitText}>LiveKit sunucusuna bağlanılıyor...</Text>
-                    </View>
-                  ) : livekitToken ? (
-                    <View style={styles.livekitRow}>
-                      <Ionicons name="shield-checkmark" size={16} color="#10B981" />
-                      <Text style={[styles.livekitText, { color: '#10B981' }]}>
-                        {isVideoCall ? 'Canlı HD Görüntülü WebRTC Aktif' : 'LiveKit Canlı WebRTC Bağlantısı Aktif'}
+              {/* Arayan / Konuşulan Kişi Adı */}
+              <Text style={styles.callerName}>{otherName}</Text>
+
+              {/* Durum Göstergesi */}
+              <View style={styles.statusRow}>
+                {isActive ? (
+                  /* Ekran 2: Bağlı Arama Kapsülleri (00:04 ve Bağlantı iyi) */
+                  <View style={styles.connectedPillsRow}>
+                    {/* Sol Yeşil Süre Kapsülü */}
+                    <View style={styles.durationPill}>
+                      <View style={styles.greenLiveDot} />
+                      <Text style={styles.durationPillText}>
+                        {formatDuration(callDuration)}
                       </Text>
                     </View>
-                  ) : (
-                    <View style={styles.livekitRow}>
-                      <Ionicons name="radio" size={16} color={colors.primaryLight} />
-                      <Text style={styles.livekitText}>P2P Sinyalleşme Aktif</Text>
+
+                    {/* Sağ Bağlantı Durumu Kapsülü */}
+                    <View style={styles.signalPill}>
+                      <Ionicons name="cellular" size={13} color="#10B981" />
+                      <Text style={styles.signalPillText}>Bağlantı iyi</Text>
                     </View>
-                  )}
-                </View>
-              )}
+                  </View>
+                ) : (
+                  /* Ekran 1: Çalıyor ••• */
+                  <View style={styles.ringingStatusRow}>
+                    <Text style={styles.ringingStatusText}>
+                      {isIncoming ? 'Gelen arama' : 'Çalıyor'}
+                    </Text>
+                    <View style={styles.ringingDots}>
+                      <View style={styles.ringingDot} />
+                      <View style={styles.ringingDot} />
+                      <View style={styles.ringingDot} />
+                    </View>
+                  </View>
+                )}
+              </View>
             </View>
           )}
 
@@ -511,102 +544,214 @@ export const ActiveCallModal: React.FC = () => {
             {isIncoming ? (
               /* Gelen Arama Kontrolleri: Reddet ve Cevapla */
               <View style={styles.incomingButtonsRow}>
-                <View style={styles.buttonCol}>
+                <View style={styles.voiceControlCol}>
                   <TouchableOpacity
-                    style={[styles.actionBtn, styles.declineBtn]}
+                    style={[styles.largeActionBtn, styles.declineBtn]}
                     onPress={() => declineCall(activeCall.callId)}
                     activeOpacity={0.8}
                   >
                     <Ionicons
                       name="call"
-                      size={28}
+                      size={32}
                       color="#FFFFFF"
                       style={{ transform: [{ rotate: '135deg' }] }}
                     />
                   </TouchableOpacity>
-                  <Text style={styles.btnLabel}>Reddet</Text>
+                  <Text style={styles.voiceEndBtnLabel}>Reddet</Text>
                 </View>
 
-                <View style={styles.buttonCol}>
+                <View style={styles.voiceControlCol}>
                   <TouchableOpacity
-                    style={[styles.actionBtn, styles.acceptBtn]}
+                    style={[styles.largeActionBtn, styles.acceptBtn]}
                     onPress={() => acceptCall(activeCall.callId)}
                     activeOpacity={0.8}
                   >
-                    <Ionicons name={activeCall.video ? 'videocam' : 'call'} size={28} color="#FFFFFF" />
+                    <Ionicons
+                      name={activeCall.video ? 'videocam' : 'call'}
+                      size={32}
+                      color="#FFFFFF"
+                    />
                   </TouchableOpacity>
-                  <Text style={styles.btnLabel}>Cevapla</Text>
+                  <Text style={styles.voiceEndBtnLabel}>Cevapla</Text>
                 </View>
               </View>
-            ) : (
-              /* Aktif veya Giden Arama Kontrolleri */
-              <View style={styles.inCallControlsWrapper}>
-                <View style={styles.inCallOptionsRow}>
-                  {/* Mikrofon Sustur/Aç */}
+            ) : isVideoCall && isActive ? (
+              /* Ekran 3: Görüntülü Arama Alt Kontrol Çubuğu (5 Buton + İsim) */
+              <View style={styles.videoControlsWrapper}>
+                <Text style={styles.videoCallerName}>{otherName}</Text>
+                <View style={styles.videoControlsRow}>
+                  {/* Mikrofon */}
                   <TouchableOpacity
-                    style={[styles.circleOptionBtn, isMuted && styles.circleOptionBtnActive]}
+                    style={[
+                      styles.videoCircleBtn,
+                      isMuted ? styles.circleBtnMuted : styles.videoCircleBtnDark,
+                    ]}
                     onPress={toggleMute}
                     activeOpacity={0.7}
                   >
                     <Ionicons
                       name={isMuted ? 'mic-off' : 'mic'}
-                      size={24}
+                      size={22}
                       color={isMuted ? '#EF4444' : '#FFFFFF'}
                     />
                   </TouchableOpacity>
 
-                  {/* Kamera Aç/Kapat */}
+                  {/* Kamera (Açıkken Beyaz Dolgulu) */}
                   <TouchableOpacity
-                    style={[styles.circleOptionBtn, !isVideoOn && styles.circleOptionBtnActive]}
+                    style={[
+                      styles.videoCircleBtn,
+                      isVideoOn ? styles.circleBtnWhite : styles.videoCircleBtnDark,
+                    ]}
                     onPress={toggleVideo}
                     activeOpacity={0.7}
                   >
                     <Ionicons
-                      name={isVideoOn ? 'videocam' : 'videocam-off'}
-                      size={24}
-                      color={!isVideoOn ? '#EF4444' : '#FFFFFF'}
+                      name={isVideoOn ? 'videocam' : 'videocam-off-outline'}
+                      size={22}
+                      color={isVideoOn ? '#000000' : '#FFFFFF'}
                     />
                   </TouchableOpacity>
 
                   {/* Ön/Arka Kamera Çevir */}
-                  {isVideoOn && (
-                    <TouchableOpacity
-                      style={styles.circleOptionBtn}
-                      onPress={() => liveKitService.switchCamera()}
-                      activeOpacity={0.7}
-                    >
-                      <Ionicons name="camera-reverse-outline" size={24} color="#FFFFFF" />
-                    </TouchableOpacity>
-                  )}
+                  <TouchableOpacity
+                    style={[styles.videoCircleBtn, styles.videoCircleBtnDark]}
+                    onPress={() => liveKitService.switchCamera()}
+                    activeOpacity={0.7}
+                  >
+                    <Ionicons name="camera-reverse-outline" size={22} color="#FFFFFF" />
+                  </TouchableOpacity>
 
                   {/* Hoparlör */}
                   <TouchableOpacity
-                    style={[styles.circleOptionBtn, speakerOn && styles.circleOptionBtnActive]}
+                    style={[
+                      styles.videoCircleBtn,
+                      speakerOn ? styles.circleBtnWhite : styles.videoCircleBtnDark,
+                    ]}
                     onPress={() => setSpeakerOn(!speakerOn)}
                     activeOpacity={0.7}
                   >
                     <Ionicons
-                      name={speakerOn ? 'volume-high' : 'volume-medium'}
+                      name={speakerOn ? 'volume-high' : 'volume-high-outline'}
+                      size={22}
+                      color={speakerOn ? '#000000' : '#FFFFFF'}
+                    />
+                  </TouchableOpacity>
+
+                  {/* Sonlandır */}
+                  <TouchableOpacity
+                    style={[styles.videoCircleBtn, styles.videoCircleBtnEnd]}
+                    onPress={() => endCall(activeCall.callId)}
+                    activeOpacity={0.8}
+                  >
+                    <Ionicons
+                      name="call"
                       size={24}
-                      color={speakerOn ? colors.primaryLight : '#FFFFFF'}
+                      color="#FFFFFF"
+                      style={{ transform: [{ rotate: '135deg' }] }}
                     />
                   </TouchableOpacity>
                 </View>
+              </View>
+            ) : (
+              /* Ekran 1 & 2: Sesli Arama Kontrolleri */
+              <View style={styles.voiceCallControlsWrapper}>
+                {/* Üst 3 Buton: Mikrofon, Kamera, Hoparlör */}
+                <View style={styles.voiceButtonsRow}>
+                  {/* Mikrofon (Ekran 2: Açıkken Beyaz Zemin, Siyah İkon) */}
+                  <View style={styles.voiceControlCol}>
+                    <TouchableOpacity
+                      style={[
+                        styles.voiceCircleBtn,
+                        isActive && !isMuted ? styles.circleBtnWhite : styles.voiceCircleBtnDark,
+                        isMuted && styles.circleBtnMuted,
+                      ]}
+                      onPress={toggleMute}
+                      activeOpacity={0.7}
+                    >
+                      <Ionicons
+                        name={
+                          isActive && !isMuted
+                            ? 'mic'
+                            : isMuted
+                            ? 'mic-off'
+                            : 'mic-outline'
+                        }
+                        size={28}
+                        color={
+                          isActive && !isMuted
+                            ? '#000000'
+                            : isMuted
+                            ? '#EF4444'
+                            : '#FFFFFF'
+                        }
+                      />
+                    </TouchableOpacity>
+                    <Text style={styles.voiceBtnLabel}>Mikrofon</Text>
+                  </View>
 
-                {/* Aramayı Sonlandır Butonu */}
-                <TouchableOpacity
-                  style={[styles.actionBtn, styles.endCallBtn]}
-                  onPress={() => endCall(activeCall.callId)}
-                  activeOpacity={0.8}
-                >
-                  <Ionicons
-                    name="call"
-                    size={32}
-                    color="#FFFFFF"
-                    style={{ transform: [{ rotate: '135deg' }] }}
-                  />
-                </TouchableOpacity>
-                <Text style={[styles.btnLabel, { marginTop: 8 }]}>Sonlandır</Text>
+                  {/* Kamera */}
+                  <View style={styles.voiceControlCol}>
+                    <TouchableOpacity
+                      style={[
+                        styles.voiceCircleBtn,
+                        isVideoOn ? styles.circleBtnWhite : styles.voiceCircleBtnDark,
+                      ]}
+                      onPress={toggleVideo}
+                      activeOpacity={0.7}
+                    >
+                      <Ionicons
+                        name={isVideoOn ? 'videocam' : 'videocam-off-outline'}
+                        size={28}
+                        color={isVideoOn ? '#000000' : '#FFFFFF'}
+                      />
+                    </TouchableOpacity>
+                    <Text style={styles.voiceBtnLabel}>Kamera</Text>
+                  </View>
+
+                  {/* Hoparlör */}
+                  <View style={styles.voiceControlCol}>
+                    <TouchableOpacity
+                      style={[
+                        styles.voiceCircleBtn,
+                        speakerOn ? styles.circleBtnWhite : styles.voiceCircleBtnDark,
+                      ]}
+                      onPress={() => setSpeakerOn(!speakerOn)}
+                      activeOpacity={0.7}
+                    >
+                      <Ionicons
+                        name={speakerOn ? 'volume-high' : 'volume-high-outline'}
+                        size={28}
+                        color={speakerOn ? '#000000' : '#FFFFFF'}
+                      />
+                    </TouchableOpacity>
+                    <Text style={styles.voiceBtnLabel}>Hoparlör</Text>
+                  </View>
+                </View>
+
+                {/* Alt Büyük Kırmızı Buton (Ekran 1: İptal / Ekran 2: Sonlandır) */}
+                <View style={styles.endBtnCol}>
+                  <TouchableOpacity
+                    style={styles.largeEndBtn}
+                    onPress={() => {
+                      if (activeCall.state === 'ringing' && isOutgoing) {
+                        declineCall(activeCall.callId);
+                      } else {
+                        endCall(activeCall.callId);
+                      }
+                    }}
+                    activeOpacity={0.8}
+                  >
+                    <Ionicons
+                      name="call"
+                      size={34}
+                      color="#FFFFFF"
+                      style={{ transform: [{ rotate: '135deg' }] }}
+                    />
+                  </TouchableOpacity>
+                  <Text style={styles.voiceEndBtnLabel}>
+                    {isActive ? 'Sonlandır' : 'İptal'}
+                  </Text>
+                </View>
               </View>
             )}
           </View>
@@ -619,7 +764,7 @@ export const ActiveCallModal: React.FC = () => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0B0F1A', // Chrono Deep Night
+    backgroundColor: '#090D18', // Derin Chrono Gece Zemin Rengi
   },
   safeContent: {
     flex: 1,
@@ -628,19 +773,69 @@ const styles = StyleSheet.create({
   },
   videoOverlayGradient: {
     ...StyleSheet.absoluteFill,
-    backgroundColor: 'rgba(11, 15, 26, 0.45)',
+    backgroundColor: 'rgba(9, 13, 24, 0.4)',
+  },
+  topHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingTop: 16,
+  },
+  minimizeBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#141D2D',
+    borderWidth: 1,
+    borderColor: '#1F2C44',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  callTypePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#141D2D',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#1F2C44',
+  },
+  callTypeText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '600',
+    letterSpacing: 0.2,
+  },
+  videoDurationPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#141D2D',
+    paddingHorizontal: 16,
+    paddingVertical: 7,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#1F2C44',
+  },
+  videoDurationText: {
+    color: '#10B981',
+    fontSize: 14,
+    fontWeight: '700',
+    letterSpacing: 0.5,
   },
   pipContainer: {
     position: 'absolute',
-    top: 70,
+    top: 72,
     right: 20,
-    width: 110,
-    height: 155,
-    borderRadius: 16,
+    width: 104,
+    height: 148,
+    borderRadius: 20,
     overflow: 'hidden',
     borderWidth: 2,
-    borderColor: colors.primaryLight,
-    backgroundColor: '#1E293B',
+    borderColor: '#2563EB',
+    backgroundColor: '#121929',
     zIndex: 20,
     elevation: 8,
     shadowColor: '#000',
@@ -656,7 +851,7 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#1E293B',
+    backgroundColor: '#121929',
     padding: 8,
   },
   pipPlaceholderText: {
@@ -672,159 +867,194 @@ const styles = StyleSheet.create({
     width: 28,
     height: 28,
     borderRadius: 14,
-    backgroundColor: 'rgba(15, 23, 42, 0.8)',
+    backgroundColor: 'rgba(15, 23, 42, 0.85)',
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
     borderColor: 'rgba(255, 255, 255, 0.25)',
   },
-  videoWaitingBadge: {
-    flexDirection: 'row',
+  centerSection: {
+    flex: 1,
+    justifyContent: 'center',
     alignItems: 'center',
-    gap: 8,
-    backgroundColor: 'rgba(56, 189, 248, 0.12)',
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 14,
+  },
+  avatarRadarBox: {
+    width: 330,
+    height: 330,
+    position: 'relative',
+    alignSelf: 'center',
+  },
+  radarRingOuter: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    width: 330,
+    height: 330,
+    borderRadius: 165,
     borderWidth: 1,
-    borderColor: 'rgba(56, 189, 248, 0.25)',
+    borderColor: '#141E30',
   },
-  videoWaitingText: {
-    color: colors.primaryLight,
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  topHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingTop: 16,
-  },
-  minimizeBtn: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    backgroundColor: '#1E293B',
+  radarRingMid: {
+    position: 'absolute',
+    top: 48,
+    left: 48,
+    width: 234,
+    height: 234,
+    borderRadius: 117,
     borderWidth: 1,
-    borderColor: '#334155',
+    borderColor: '#1A273E',
+  },
+  avatarWrapper: {
+    position: 'absolute',
+    top: 95,
+    left: 95,
+    width: 140,
+    height: 140,
+    borderRadius: 70,
+  },
+  avatarDisc: {
+    width: 140,
+    height: 140,
+    borderRadius: 70,
+    backgroundColor: '#101726',
     alignItems: 'center',
     justifyContent: 'center',
+    overflow: 'hidden',
   },
-  callTypePill: {
+  avatarImage: {
+    width: 140,
+    height: 140,
+    borderRadius: 70,
+    resizeMode: 'cover',
+  },
+  avatarInitialLetter: {
+    fontSize: 56,
+    fontWeight: '700',
+    letterSpacing: -1,
+  },
+  avatarTrackRing: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    width: 140,
+    height: 140,
+    borderRadius: 70,
+    borderWidth: 3,
+    borderColor: 'rgba(255, 255, 255, 0.06)',
+  },
+  avatarArcRing: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    width: 140,
+    height: 140,
+    borderRadius: 70,
+    borderWidth: 3,
+  },
+  avatarDotTop: {
+    position: 'absolute',
+    top: 39,
+    left: 130,
+    width: 5.5,
+    height: 5.5,
+    borderRadius: 2.75,
+  },
+  avatarDotMid: {
+    position: 'absolute',
+    top: 67,
+    left: 136,
+    width: 5.5,
+    height: 5.5,
+    borderRadius: 2.75,
+  },
+  avatarDotBottom: {
+    position: 'absolute',
+    top: 95,
+    left: 130,
+    width: 5.5,
+    height: 5.5,
+    borderRadius: 2.75,
+  },
+  callerName: {
+    fontSize: 28,
+    fontWeight: '700',
+    color: '#FFFFFF',
+    marginTop: 28,
+    textAlign: 'center',
+    letterSpacing: -0.5,
+  },
+  statusRow: {
+    marginTop: 12,
+    alignItems: 'center',
+  },
+  ringingStatusRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    backgroundColor: '#1E293B',
-    paddingHorizontal: 14,
-    paddingVertical: 6,
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: '#334155',
-  },
-  callTypeText: {
-    color: colors.primaryLight,
-    fontSize: 12,
-    fontWeight: '700',
-    letterSpacing: 0.8,
-  },
-  centerContent: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginVertical: 'auto',
-  },
-  avatarRing: {
-    width: 148,
-    height: 148,
-    borderRadius: 74,
-    borderWidth: 3,
-    borderColor: colors.primaryLight,
-    justifyContent: 'center',
-    alignItems: 'center',
-    shadowColor: colors.primary,
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.45,
-    shadowRadius: 16,
-    elevation: 8,
-    backgroundColor: '#151D30',
-  },
-  avatarImage: {
-    width: 136,
-    height: 136,
-    borderRadius: 68,
-  },
-  avatarPlaceholder: {
-    width: 136,
-    height: 136,
-    borderRadius: 68,
-    backgroundColor: colors.primary,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  avatarLetter: {
-    fontSize: 52,
-    fontWeight: '700',
-    color: '#FFFFFF',
-  },
-  callerName: {
-    fontSize: 26,
-    fontWeight: '700',
-    color: '#FFFFFF',
-    marginTop: 24,
-    textAlign: 'center',
-  },
-  statusRow: {
-    marginTop: 10,
-    alignItems: 'center',
   },
   ringingStatusText: {
     fontSize: 16,
-    color: colors.textSecondary,
+    color: '#94A3B8',
     fontWeight: '500',
   },
-  activeDurationBadge: {
+  ringingDots: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    backgroundColor: 'rgba(16, 185, 129, 0.15)',
-    paddingHorizontal: 16,
-    paddingVertical: 6,
-    borderRadius: 16,
+    gap: 4,
+    marginTop: 2,
+  },
+  ringingDot: {
+    width: 5,
+    height: 5,
+    borderRadius: 2.5,
+    backgroundColor: '#38BDF8',
+  },
+  connectedPillsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  durationPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: 'rgba(16, 185, 129, 0.12)',
     borderWidth: 1,
     borderColor: 'rgba(16, 185, 129, 0.3)',
+    borderRadius: 20,
+    paddingHorizontal: 14,
+    paddingVertical: 6,
   },
   greenLiveDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
+    width: 7,
+    height: 7,
+    borderRadius: 3.5,
     backgroundColor: '#10B981',
   },
-  durationText: {
+  durationPillText: {
     color: '#10B981',
-    fontSize: 16,
+    fontSize: 14,
     fontWeight: '700',
-    letterSpacing: 1,
+    letterSpacing: 0.5,
   },
-  livekitBadge: {
-    marginTop: 20,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    backgroundColor: '#151D30',
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: colors.borderLight,
-  },
-  livekitRow: {
+  signalPill: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    gap: 6,
+    backgroundColor: '#131C2D',
+    borderWidth: 1,
+    borderColor: '#1F2C44',
+    borderRadius: 20,
+    paddingHorizontal: 14,
+    paddingVertical: 6,
   },
-  livekitText: {
+  signalPillText: {
+    color: '#CBD5E1',
     fontSize: 13,
-    color: colors.textSecondary,
     fontWeight: '500',
   },
   controlsFooter: {
-    paddingBottom: 28,
+    paddingBottom: 36,
   },
   incomingButtonsRow: {
     flexDirection: 'row',
@@ -832,65 +1062,110 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 20,
   },
-  buttonCol: {
+  voiceControlCol: {
+    alignItems: 'center',
+    width: 80,
+  },
+  endBtnCol: {
     alignItems: 'center',
   },
-  actionBtn: {
-    width: 68,
-    height: 68,
-    borderRadius: 34,
+  largeActionBtn: {
+    width: 74,
+    height: 74,
+    borderRadius: 37,
     justifyContent: 'center',
     alignItems: 'center',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.35,
-    shadowRadius: 8,
-    elevation: 6,
   },
   declineBtn: {
     backgroundColor: '#EF4444',
-    shadowColor: '#EF4444',
   },
   acceptBtn: {
     backgroundColor: '#10B981',
-    shadowColor: '#10B981',
   },
-  endCallBtn: {
-    backgroundColor: '#EF4444',
-    shadowColor: '#EF4444',
-    alignSelf: 'center',
-    width: 72,
-    height: 72,
-    borderRadius: 36,
-  },
-  btnLabel: {
+  voiceBtnLabel: {
     marginTop: 10,
-    color: '#FFFFFF',
+    color: '#7E8BA6',
+    fontSize: 13,
+    fontWeight: '500',
+  },
+  voiceEndBtnLabel: {
+    marginTop: 10,
+    color: '#94A3B8',
     fontSize: 14,
-    fontWeight: '600',
+    fontWeight: '500',
   },
-  inCallControlsWrapper: {
+  voiceCallControlsWrapper: {
     alignItems: 'center',
+    width: '100%',
   },
-  inCallOptionsRow: {
+  voiceButtonsRow: {
     flexDirection: 'row',
+    justifyContent: 'space-around',
+    alignItems: 'center',
+    width: '100%',
+    paddingHorizontal: 16,
+    marginBottom: 32,
+  },
+  voiceCircleBtn: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
     justifyContent: 'center',
     alignItems: 'center',
-    gap: 24,
-    marginBottom: 28,
   },
-  circleOptionBtn: {
+  voiceCircleBtnDark: {
+    backgroundColor: '#141D2D',
+    borderWidth: 1,
+    borderColor: '#1F2C44',
+  },
+  circleBtnWhite: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 0,
+  },
+  circleBtnMuted: {
+    backgroundColor: '#1E2536',
+    borderWidth: 1,
+    borderColor: '#EF4444',
+  },
+  largeEndBtn: {
+    width: 74,
+    height: 74,
+    borderRadius: 37,
+    backgroundColor: '#EF4444',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  videoControlsWrapper: {
+    gap: 16,
+  },
+  videoCallerName: {
+    color: '#FFFFFF',
+    fontSize: 24,
+    fontWeight: '700',
+    paddingHorizontal: 12,
+    letterSpacing: -0.4,
+    marginBottom: 8,
+  },
+  videoControlsRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+  },
+  videoCircleBtn: {
     width: 54,
     height: 54,
     borderRadius: 27,
-    backgroundColor: '#1E293B',
-    borderWidth: 1,
-    borderColor: '#334155',
     justifyContent: 'center',
     alignItems: 'center',
   },
-  circleOptionBtnActive: {
-    backgroundColor: '#334155',
-    borderColor: colors.primaryLight,
+  videoCircleBtnDark: {
+    backgroundColor: '#141D2D',
+    borderWidth: 1,
+    borderColor: '#1F2C44',
+  },
+  videoCircleBtnEnd: {
+    backgroundColor: '#EF4444',
   },
   floatingCallBarContainer: {
     position: 'absolute',

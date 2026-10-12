@@ -522,7 +522,8 @@ export const RoomsListScreen: React.FC<RoomsListScreenProps> = ({
       </Modal>
 
       {/* ------------------------------------------------------------- */}
-      {/* Uzun Basma İşlem Menüsü (Sabitle, Sessize Al, Sil)            */}
+      {/* ------------------------------------------------------------- */}
+      {/* Uzun Basma İşlem Menüsü (Ekran 6: Vurgulanan Kart + Menü)     */}
       {/* ------------------------------------------------------------- */}
       <Modal
         visible={!!selectedRoomForAction}
@@ -532,76 +533,175 @@ export const RoomsListScreen: React.FC<RoomsListScreenProps> = ({
       >
         <TouchableWithoutFeedback onPress={() => setSelectedRoomForAction(null)}>
           <View style={styles.actionModalOverlay}>
-            <View style={styles.actionModalCard}>
-              <Text style={styles.actionModalTitle} numberOfLines={1}>
-                {selectedRoomForAction?.type === 'DIRECT'
-                  ? selectedRoomForAction.peer?.displayName || 'Kişisel Sohbet'
-                  : selectedRoomForAction?.name || 'Sohbet Odası'}
-              </Text>
+            <TouchableWithoutFeedback>
+              <View style={styles.actionModalContainer}>
+                {/* Vurgulanan Sohbet Kartı (Mavi Parlayan Çerçeve) */}
+                {selectedRoomForAction && (
+                  <View style={styles.actionHighlightedCard}>
+                    <ChronoAvatar
+                      size={48}
+                      uri={
+                        selectedRoomForAction.type === 'DIRECT'
+                          ? selectedRoomForAction.peer?.avatarUrl
+                          : selectedRoomForAction.iconUrl
+                      }
+                      name={
+                        selectedRoomForAction.type === 'DIRECT'
+                          ? selectedRoomForAction.peer?.displayName ||
+                            selectedRoomForAction.peer?.username ||
+                            'Kullanıcı'
+                          : selectedRoomForAction.name || 'Sohbet Odası'
+                      }
+                      emoji={
+                        selectedRoomForAction.type !== 'DIRECT' &&
+                        selectedRoomForAction.name?.startsWith('🔥')
+                          ? '🔥'
+                          : undefined
+                      }
+                      ringColor="#2563EB"
+                      showRing={true}
+                    />
 
-              <TouchableOpacity
-                style={styles.actionModalRow}
-                onPress={() => {
-                  if (selectedRoomForAction) togglePinRoom(selectedRoomForAction.id);
-                  setSelectedRoomForAction(null);
-                }}
-              >
-                <Ionicons
-                  name={selectedRoomForAction?.isPinned ? 'pin' : 'pin-outline'}
-                  size={20}
-                  color={colors.primaryLight}
-                />
-                <Text style={styles.actionModalRowText}>
-                  {selectedRoomForAction?.isPinned ? 'Sabitlemeyi Kaldır' : 'Sohbeti Başa Sabitle'}
-                </Text>
-              </TouchableOpacity>
+                    <View style={styles.actionHighlightedDetails}>
+                      <View style={styles.actionHighlightedHeader}>
+                        <Text style={styles.actionHighlightedTitle} numberOfLines={1}>
+                          {selectedRoomForAction.type === 'DIRECT'
+                            ? selectedRoomForAction.peer?.displayName ||
+                              selectedRoomForAction.peer?.username ||
+                              'Kişisel Sohbet'
+                            : selectedRoomForAction.name || 'Sohbet Odası'}
+                        </Text>
+                        <Text style={styles.actionHighlightedTime}>
+                          {formatListTimestamp(
+                            selectedRoomForAction.lastMessageAt ||
+                              selectedRoomForAction.updatedAt ||
+                              selectedRoomForAction.createdAt,
+                          )}
+                        </Text>
+                      </View>
 
-              <TouchableOpacity
-                style={styles.actionModalRow}
-                onPress={() => {
-                  if (selectedRoomForAction) toggleMuteRoom(selectedRoomForAction.id);
-                  setSelectedRoomForAction(null);
-                }}
-              >
-                <Ionicons
-                  name={selectedRoomForAction?.isMuted ? 'volume-high-outline' : 'volume-mute-outline'}
-                  size={20}
-                  color="#F59E0B"
-                />
-                <Text style={styles.actionModalRowText}>
-                  {selectedRoomForAction?.isMuted ? 'Sessizden Çıkar' : 'Bildirimleri Sessize Al'}
-                </Text>
-              </TouchableOpacity>
+                      <View style={styles.actionHighlightedFooter}>
+                        <Text style={styles.actionHighlightedLastMsg} numberOfLines={1}>
+                          {selectedRoomForAction.lastMessage?.content || 'Henüz mesaj yok'}
+                        </Text>
+                        {selectedRoomForAction.unreadCount && selectedRoomForAction.unreadCount > 0 ? (
+                          <View style={styles.actionHighlightedBadge}>
+                            <Text style={styles.actionHighlightedBadgeText}>
+                              {selectedRoomForAction.unreadCount}
+                            </Text>
+                          </View>
+                        ) : null}
+                      </View>
+                    </View>
+                  </View>
+                )}
 
-              <TouchableOpacity
-                style={styles.actionModalRow}
-                onPress={() => {
-                  const target = selectedRoomForAction;
-                  setSelectedRoomForAction(null);
-                  if (!target) return;
+                {/* Eylemler Menü Kartı */}
+                <View style={styles.actionModalCard}>
+                  {/* Başa Sabitle */}
+                  <TouchableOpacity
+                    style={styles.actionModalRow}
+                    onPress={() => {
+                      if (selectedRoomForAction) togglePinRoom(selectedRoomForAction.id);
+                      setSelectedRoomForAction(null);
+                    }}
+                    activeOpacity={0.7}
+                  >
+                    <Ionicons
+                      name={selectedRoomForAction?.isPinned ? 'pin' : 'pin-outline'}
+                      size={20}
+                      color="#38BDF8"
+                    />
+                    <Text style={styles.actionModalRowText}>
+                      {selectedRoomForAction?.isPinned ? 'Sabitlemeyi kaldır' : 'Başa sabitle'}
+                    </Text>
+                  </TouchableOpacity>
 
-                  Alert.alert(
-                    'Sohbeti Sil',
-                    target.type === 'DIRECT'
-                      ? 'Bu sohbeti silmek istediğinize emin misiniz?'
-                      : 'Bu sohbet odasından ayrılmak veya silmek istiyor musunuz?',
-                    [
-                      { text: 'İptal', style: 'cancel' },
-                      {
-                        text: 'Sil',
-                        style: 'destructive',
-                        onPress: () => deleteRoom(target.id, false),
-                      },
-                    ],
-                  );
-                }}
-              >
-                <Ionicons name="trash-outline" size={20} color="#EF4444" />
-                <Text style={[styles.actionModalRowText, { color: '#EF4444' }]}>
-                  {selectedRoomForAction?.type === 'DIRECT' ? 'Sohbeti Sil' : 'Odadan Ayrıl / Sil'}
-                </Text>
-              </TouchableOpacity>
-            </View>
+                  {/* Sessize Al */}
+                  <TouchableOpacity
+                    style={styles.actionModalRow}
+                    onPress={() => {
+                      if (selectedRoomForAction) toggleMuteRoom(selectedRoomForAction.id);
+                      setSelectedRoomForAction(null);
+                    }}
+                    activeOpacity={0.7}
+                  >
+                    <Ionicons
+                      name={selectedRoomForAction?.isMuted ? 'volume-high-outline' : 'volume-mute-outline'}
+                      size={20}
+                      color="#38BDF8"
+                    />
+                    <Text style={styles.actionModalRowText}>
+                      {selectedRoomForAction?.isMuted ? 'Sessizden çıkar' : 'Sessize al'}
+                    </Text>
+                  </TouchableOpacity>
+
+                  {/* Okunmadı İşaretle */}
+                  <TouchableOpacity
+                    style={styles.actionModalRow}
+                    onPress={() => {
+                      if (selectedRoomForAction) {
+                        const targetId = selectedRoomForAction.id;
+                        const isCurrentlyUnread = (selectedRoomForAction.unreadCount || 0) > 0;
+                        if (isCurrentlyUnread) {
+                          useChatStore.getState().markAsRead(targetId);
+                        } else {
+                          useChatStore.setState((state) => ({
+                            rooms: state.rooms.map((r) =>
+                              r.id === targetId ? { ...r, unreadCount: 1 } : r,
+                            ),
+                          }));
+                        }
+                      }
+                      setSelectedRoomForAction(null);
+                    }}
+                    activeOpacity={0.7}
+                  >
+                    <Ionicons
+                      name="ellipse-outline"
+                      size={18}
+                      color="#38BDF8"
+                    />
+                    <Text style={styles.actionModalRowText}>
+                      {(selectedRoomForAction?.unreadCount || 0) > 0
+                        ? 'Okundu işaretle'
+                        : 'Okunmadı işaretle'}
+                    </Text>
+                  </TouchableOpacity>
+
+                  {/* Sohbeti Sil */}
+                  <TouchableOpacity
+                    style={[styles.actionModalRow, styles.actionModalRowLast]}
+                    onPress={() => {
+                      const target = selectedRoomForAction;
+                      setSelectedRoomForAction(null);
+                      if (!target) return;
+
+                      Alert.alert(
+                        'Sohbeti Sil',
+                        target.type === 'DIRECT'
+                          ? 'Bu sohbeti silmek istediğinize emin misiniz?'
+                          : 'Bu sohbet odasından ayrılmak veya silmek istiyor musunuz?',
+                        [
+                          { text: 'İptal', style: 'cancel' },
+                          {
+                            text: 'Sil',
+                            style: 'destructive',
+                            onPress: () => deleteRoom(target.id, false),
+                          },
+                        ],
+                      );
+                    }}
+                    activeOpacity={0.7}
+                  >
+                    <Ionicons name="trash-outline" size={20} color="#EF4444" />
+                    <Text style={[styles.actionModalRowText, { color: '#EF4444' }]}>
+                      {selectedRoomForAction?.type === 'DIRECT' ? 'Sohbeti sil' : 'Odadan ayrıl / sil'}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </TouchableWithoutFeedback>
           </View>
         </TouchableWithoutFeedback>
       </Modal>
@@ -1220,37 +1320,104 @@ const styles = StyleSheet.create({
   },
   actionModalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.6)',
+    backgroundColor: 'rgba(5, 8, 16, 0.78)',
     justifyContent: 'center',
     alignItems: 'center',
-    padding: 24,
+    paddingHorizontal: 20,
   },
-  actionModalCard: {
+  actionModalContainer: {
     width: '100%',
-    backgroundColor: '#151E2B',
-    borderRadius: 16,
-    padding: 18,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.08)',
+    maxWidth: 360,
   },
-  actionModalTitle: {
+  actionHighlightedCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#101728',
+    borderRadius: 20,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    borderWidth: 1.8,
+    borderColor: '#2563EB',
+    marginBottom: 14,
+    shadowColor: '#2563EB',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.35,
+    shadowRadius: 12,
+    elevation: 10,
+  },
+  actionHighlightedDetails: {
+    flex: 1,
+    marginLeft: 12,
+  },
+  actionHighlightedHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  actionHighlightedTitle: {
+    color: '#FFFFFF',
     fontSize: 16,
     fontWeight: '700',
-    color: colors.textPrimary,
-    marginBottom: 16,
+    letterSpacing: -0.2,
+  },
+  actionHighlightedTime: {
+    color: '#7E8BA6',
+    fontSize: 12,
+  },
+  actionHighlightedFooter: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: 4,
+  },
+  actionHighlightedLastMsg: {
+    color: '#94A3B8',
+    fontSize: 14,
+    flex: 1,
+    marginRight: 8,
+  },
+  actionHighlightedBadge: {
+    backgroundColor: '#2563EB',
+    minWidth: 20,
+    height: 20,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 6,
+  },
+  actionHighlightedBadgeText: {
+    color: '#FFFFFF',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  actionModalCard: {
+    backgroundColor: '#101726',
+    borderRadius: 22,
+    paddingHorizontal: 18,
+    paddingVertical: 6,
+    borderWidth: 1,
+    borderColor: '#1C273E',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.4,
+    shadowRadius: 16,
+    elevation: 14,
   },
   actionModalRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 12,
-    gap: 12,
-    borderBottomWidth: 0.5,
+    paddingVertical: 14,
+    gap: 14,
+    borderBottomWidth: 1,
     borderBottomColor: 'rgba(255, 255, 255, 0.05)',
+  },
+  actionModalRowLast: {
+    borderBottomWidth: 0,
   },
   actionModalRowText: {
     fontSize: 15,
-    color: colors.textPrimary,
-    fontWeight: '500',
+    color: '#FFFFFF',
+    fontWeight: '600',
   },
   skeletonContainer: {
     paddingVertical: 8,

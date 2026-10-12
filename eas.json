@@ -6,6 +6,9 @@
     "development": {
       "developmentClient": true,
       "distribution": "internal",
+      "android": {
+        "buildType": "apk"
+      },
       "env": {
         "EXPO_PUBLIC_API_URL": "https://api.zyqwax.com/api",
         "EXPO_PUBLIC_SOCKET_URL": "https://api.zyqwax.com"

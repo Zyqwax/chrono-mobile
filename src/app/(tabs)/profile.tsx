@@ -614,57 +614,126 @@ export default function ProfileScreen() {
         </View>
       </ScrollView>
 
-      {/* Profil Düzenle Modalı */}
+      {/* Profil Düzenle Modalı - Ekran 5 */}
       <Modal
         visible={editModalVisible}
         animationType="slide"
         onRequestClose={() => setEditModalVisible(false)}
       >
         <SafeAreaView style={styles.editModalContainer}>
+          {/* Üst Başlık Çubuğu */}
           <View style={styles.editModalHeader}>
-            <TouchableOpacity onPress={() => setEditModalVisible(false)}>
-              <Ionicons name="close" size={24} color="#FFFFFF" />
+            <TouchableOpacity
+              style={styles.editCloseBtn}
+              onPress={() => setEditModalVisible(false)}
+              activeOpacity={0.7}
+            >
+              <Ionicons name="close" size={20} color="#FFFFFF" />
             </TouchableOpacity>
-            <Text style={styles.editModalTitle}>Profili Düzenle</Text>
-            <TouchableOpacity onPress={handleSaveProfile} disabled={saving}>
-              {saving ? (
-                <ActivityIndicator size="small" color="#38BDF8" />
-              ) : (
-                <Ionicons name="checkmark" size={26} color="#38BDF8" />
-              )}
-            </TouchableOpacity>
+            <Text style={styles.editModalTitle}>Profili düzenle</Text>
+            <View style={{ width: 36 }} />
           </View>
 
-          <ScrollView style={{ padding: 20 }}>
-            <Text style={styles.inputLabel}>Görünen İsim</Text>
-            <TextInput
-              style={styles.modalTextInput}
-              value={displayName}
-              onChangeText={setDisplayName}
-              placeholder="Görünen İsim"
-              placeholderTextColor="#64748B"
-            />
+          <ScrollView
+            style={{ flex: 1 }}
+            contentContainerStyle={styles.editModalContent}
+            keyboardShouldPersistTaps="handled"
+          >
+            {/* Avatar & Fotoğrafı Değiştir Alanı */}
+            <View style={styles.editAvatarSection}>
+              <TouchableOpacity onPress={handleAvatarOptions} activeOpacity={0.85}>
+                <ChronoAvatar
+                  size={96}
+                  name={displayName || currentUser?.displayName || 'U'}
+                  uri={currentUser?.avatarUrl}
+                  ringColor="#2563EB"
+                  badge="camera"
+                  showRing={true}
+                />
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={handleAvatarOptions}
+                activeOpacity={0.7}
+                style={{ marginTop: 12 }}
+              >
+                <Text style={styles.changePhotoText}>Fotoğrafı değiştir</Text>
+              </TouchableOpacity>
+            </View>
 
-            <Text style={styles.inputLabel}>Kullanıcı Adı</Text>
-            <TextInput
-              style={styles.modalTextInput}
-              value={username}
-              onChangeText={setUsername}
-              placeholder="kullanici_adi"
-              placeholderTextColor="#64748B"
-              autoCapitalize="none"
-            />
+            {/* Alan 1: Görünen ad */}
+            <View style={styles.formCard}>
+              <View style={styles.formCardIconBox}>
+                <Ionicons name="person-outline" size={20} color="#38BDF8" />
+              </View>
+              <View style={styles.formCardContent}>
+                <Text style={styles.formCardLabel}>Görünen ad</Text>
+                <TextInput
+                  style={styles.formCardInput}
+                  value={displayName}
+                  onChangeText={setDisplayName}
+                  placeholder="Görünen adınız"
+                  placeholderTextColor="#64748B"
+                />
+              </View>
+            </View>
 
-            <Text style={styles.inputLabel}>Hakkında (Bio)</Text>
-            <TextInput
-              style={[styles.modalTextInput, { height: 90, textAlignVertical: 'top' }]}
-              value={bio}
-              onChangeText={setBio}
-              placeholder="Kendinizden bahsedin..."
-              placeholderTextColor="#64748B"
-              multiline
-              maxLength={80}
-            />
+            {/* Alan 2: Kullanıcı adı */}
+            <View style={[styles.formCard, styles.formCardActiveBorder]}>
+              <View style={styles.formCardIconBox}>
+                <Text style={styles.atSymbolIcon}>@</Text>
+              </View>
+              <View style={styles.formCardContent}>
+                <Text style={styles.formCardLabel}>Kullanıcı adı</Text>
+                <TextInput
+                  style={styles.formCardInput}
+                  value={username}
+                  onChangeText={setUsername}
+                  placeholder="kullanici_adi"
+                  placeholderTextColor="#64748B"
+                  autoCapitalize="none"
+                />
+              </View>
+              <View style={styles.availableBadge}>
+                <Ionicons name="checkmark" size={14} color="#10B981" />
+                <Text style={styles.availableBadgeText}>Müsait</Text>
+              </View>
+            </View>
+
+            {/* Alan 3: Hakkında (Bio) */}
+            <View style={[styles.formCard, styles.formCardBio]}>
+              <Text style={styles.formCardLabel}>Hakkında</Text>
+              <TextInput
+                style={styles.bioInput}
+                value={bio}
+                onChangeText={setBio}
+                placeholder="Kendinden kısaca bahset"
+                placeholderTextColor="#64748B"
+                multiline
+                maxLength={120}
+              />
+              <Text style={styles.bioCounter}>{bio.length}/120</Text>
+            </View>
+
+            {/* Kaydet Butonu */}
+            <View style={{ marginTop: 'auto', paddingTop: 28, paddingBottom: 16 }}>
+              <TouchableOpacity
+                style={styles.saveProfileBtn}
+                onPress={handleSaveProfile}
+                disabled={saving}
+                activeOpacity={0.85}
+              >
+                {saving ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <>
+                    <Text style={styles.saveProfileBtnText}>Kaydet</Text>
+                    <View style={styles.saveCheckBadge}>
+                      <Ionicons name="checkmark" size={15} color="#FFFFFF" />
+                    </View>
+                  </>
+                )}
+              </TouchableOpacity>
+            </View>
           </ScrollView>
         </SafeAreaView>
       </Modal>
@@ -887,38 +956,149 @@ const styles = StyleSheet.create({
   },
   editModalContainer: {
     flex: 1,
-    backgroundColor: '#0B0F1A',
+    backgroundColor: '#090D18', // Derin gece arka planı
   },
   editModalHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255, 255, 255, 0.06)',
+    paddingHorizontal: 20,
+    paddingTop: 14,
+    paddingBottom: 10,
+  },
+  editCloseBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#141C2C',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   editModalTitle: {
-    fontSize: 17,
+    fontSize: 18,
     fontWeight: '700',
     color: '#FFFFFF',
+    letterSpacing: -0.3,
   },
-  inputLabel: {
-    fontSize: 12,
+  editModalContent: {
+    paddingHorizontal: 20,
+    paddingTop: 10,
+    paddingBottom: 24,
+    flexGrow: 1,
+  },
+  editAvatarSection: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginVertical: 20,
+  },
+  changePhotoText: {
     color: '#38BDF8',
+    fontSize: 14,
     fontWeight: '600',
-    marginTop: 16,
-    marginBottom: 6,
   },
-  modalTextInput: {
-    backgroundColor: '#111827',
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    fontSize: 15,
-    color: '#FFFFFF',
+  formCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#101728',
+    borderRadius: 18,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.08)',
+    borderColor: '#1C273E',
+    marginBottom: 14,
+  },
+  formCardActiveBorder: {
+    borderColor: '#2563EB',
+    borderWidth: 1.5,
+  },
+  formCardBio: {
+    flexDirection: 'column',
+    alignItems: 'stretch',
+    minHeight: 125,
+    justifyContent: 'space-between',
+  },
+  formCardIconBox: {
+    marginRight: 14,
+    width: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  atSymbolIcon: {
+    color: '#38BDF8',
+    fontSize: 20,
+    fontWeight: '700',
+  },
+  formCardContent: {
+    flex: 1,
+  },
+  formCardLabel: {
+    fontSize: 12,
+    color: '#7E8BA6',
+    fontWeight: '500',
+  },
+  formCardInput: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#FFFFFF',
+    paddingVertical: 4,
+    paddingHorizontal: 0,
+    marginTop: 2,
+  },
+  availableBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingLeft: 8,
+  },
+  availableBadgeText: {
+    color: '#10B981',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  bioInput: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    marginTop: 8,
+    minHeight: 50,
+    textAlignVertical: 'top',
+    paddingHorizontal: 0,
+    paddingVertical: 0,
+  },
+  bioCounter: {
+    alignSelf: 'flex-end',
+    color: '#5E6C87',
+    fontSize: 12,
+    fontWeight: '500',
+    marginTop: 8,
+  },
+  saveProfileBtn: {
+    backgroundColor: '#2563EB',
+    height: 56,
+    borderRadius: 28,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    position: 'relative',
+    shadowColor: '#2563EB',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.35,
+    shadowRadius: 10,
+    elevation: 8,
+  },
+  saveProfileBtnText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  saveCheckBadge: {
+    position: 'absolute',
+    right: 12,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: 'rgba(255, 255, 255, 0.22)',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   modalOverlay: {
     flex: 1,

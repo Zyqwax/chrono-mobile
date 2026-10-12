@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   FlatList,
   Modal,
@@ -10,22 +10,24 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useChatStore } from '../store/useChatStore';
-import { chronoTheme } from '../theme/colors';
-
-const { colors, radius } = chronoTheme;
+import { liveKitService } from '../services/livekit';
+import { ChronoAvatar } from './ChronoAvatar';
 
 interface VoiceRoomSheetProps {
   visible: boolean;
   roomName: string;
   onClose: () => void;
+  onInvite?: () => void;
 }
 
 export const VoiceRoomSheet: React.FC<VoiceRoomSheetProps> = ({
   visible,
   roomName,
   onClose,
+  onInvite,
 }) => {
   const {
+    currentUser,
     voiceParticipants,
     isMuted,
     isVideoOn,
@@ -34,107 +36,199 @@ export const VoiceRoomSheet: React.FC<VoiceRoomSheetProps> = ({
     leaveRoomVoice,
   } = useChatStore();
 
+  const [duration, setDuration] = useState(134); // ~02:14
+  const [speakerOn, setSpeakerOn] = useState(false);
+
+  useEffect(() => {
+    if (!visible) {
+      setDuration(0);
+      return;
+    }
+    const interval = setInterval(() => {
+      setDuration((prev) => prev + 1);
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [visible]);
+
+  const formatTime = (seconds: number) => {
+    const m = Math.floor(seconds / 60);
+    const s = seconds % 60;
+    return `${m < 10 ? '0' : ''}${m}:${s < 10 ? '0' : ''}${s}`;
+  };
+
+  const handleToggleSpeaker = () => {
+    const next = !speakerOn;
+    setSpeakerOn(next);
+    liveKitService.setSpeakerOutput(next);
+  };
+
   const handleLeave = () => {
     leaveRoomVoice();
     onClose();
   };
 
+  // Eğer katılımcı listesinde henüz kimse yoksa veya sadece biz varsak listeyi hazırla
+  const displayList = voiceParticipants.length > 0
+    ? voiceParticipants
+    : [
+        {
+          id: currentUser?.id || 'me',
+          displayName: currentUser?.displayName || currentUser?.username || 'Sen',
+          isSpeaking: true,
+          isMuted: isMuted,
+        },
+      ];
+
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
       <View style={styles.overlay}>
         <SafeAreaView style={styles.sheetContainer} edges={['bottom']}>
-          {/* Top Drag Indicator */}
+          {/* Üst Sürükleme Çubuğu */}
           <View style={styles.dragHandle} />
 
-          {/* Header */}
+          {/* Başlık Alanı (Ekran 7) */}
           <View style={styles.sheetHeader}>
-            <View>
+            <View style={{ flex: 1 }}>
               <View style={styles.liveBadgeRow}>
-                <View style={styles.livePulseDot} />
-                <Text style={styles.liveBadge}>CANLI SESLİ SOHBET</Text>
+                <View style={styles.liveTripleDots}>
+                  <View style={styles.liveDot} />
+                  <View style={styles.liveDot} />
+                  <View style={styles.liveDot} />
+                </View>
+                <Text style={styles.liveBadge}>
+                  CANLI SESLİ SOHBET · {formatTime(duration)}
+                </Text>
               </View>
-              <Text style={styles.roomTitle}>{roomName}</Text>
+              <Text style={styles.roomTitle} numberOfLines={1}>
+                {roomName}
+              </Text>
             </View>
+
             <TouchableOpacity onPress={onClose} style={styles.closeBtn} activeOpacity={0.7}>
-              <Ionicons name="chevron-down" size={26} color={colors.textPrimary} />
+              <Ionicons name="chevron-down" size={24} color="#FFFFFF" />
             </TouchableOpacity>
           </View>
 
-          {/* Participants Grid */}
-          <View style={styles.participantsArea}>
-            <Text style={styles.countText}>
-              {voiceParticipants.length} Katılımcı
-            </Text>
+          {/* Katılımcı Sayısı */}
+          <Text style={styles.countText}>
+            {displayList.length} katılımcı
+          </Text>
 
-            <FlatList
-              data={voiceParticipants}
-              keyExtractor={(item) => item.id}
-              numColumns={3}
-              columnWrapperStyle={{ gap: 16, justifyContent: 'center' }}
-              contentContainerStyle={{ paddingVertical: 20 }}
-              renderItem={({ item }) => (
-                <View style={styles.participantCard}>
-                  <View
-                    style={[
-                      styles.avatarWrapper,
-                      item.isSpeaking && styles.speakingHalo,
-                    ]}
-                  >
-                    <View style={styles.avatarCircle}>
-                      <Text style={styles.avatarText}>
-                        {item.displayName?.charAt(0).toUpperCase() || 'U'}
-                      </Text>
-                    </View>
-                    {item.isMuted && (
-                      <View style={styles.mutedBadge}>
-                        <Ionicons name="mic-off" size={12} color="#ffffff" />
-                      </View>
-                    )}
-                  </View>
-                  <Text style={styles.participantName} numberOfLines={1}>
-                    {item.displayName}
-                  </Text>
+          {/* Katılımcı Izgarası (Ekran 7) */}
+          <View style={styles.participantsArea}>
+            <View style={styles.participantsRow}>
+              {/* Ben (Sen) */}
+              <View style={styles.participantItem}>
+                <ChronoAvatar
+                  size={84}
+                  name={currentUser?.displayName || currentUser?.username || 'E'}
+                  uri={currentUser?.avatarUrl}
+                  ringColor="#10B981"
+                  showRing={true}
+                />
+                <View style={styles.speakerRow}>
+                  <Text style={styles.participantLabel}>Sen</Text>
+                  <Ionicons name="cellular" size={13} color="#10B981" />
                 </View>
-              )}
-            />
+              </View>
+
+              {/* Davet Et Butonu */}
+              <View style={styles.participantItem}>
+                <TouchableOpacity
+                  style={styles.inviteDashedBtn}
+                  onPress={onInvite || onClose}
+                  activeOpacity={0.8}
+                >
+                  <Ionicons name="add" size={32} color="#38BDF8" />
+                </TouchableOpacity>
+                <TouchableOpacity onPress={onInvite || onClose} activeOpacity={0.7}>
+                  <Text style={styles.inviteLabel}>Davet et</Text>
+                </TouchableOpacity>
+              </View>
+
+              {/* Diğer Katılımcılar Varsa */}
+              {displayList
+                .filter((p) => p.id !== (currentUser?.id || 'me'))
+                .map((item) => (
+                  <View key={item.id} style={styles.participantItem}>
+                    <ChronoAvatar
+                      size={84}
+                      name={item.displayName || 'U'}
+                      ringColor={item.isSpeaking ? '#10B981' : '#2563EB'}
+                      showRing={true}
+                    />
+                    <Text style={styles.participantLabel} numberOfLines={1}>
+                      {item.displayName}
+                    </Text>
+                  </View>
+                ))}
+            </View>
           </View>
 
-          {/* Action Bar (Telegram Voice Action Buttons) */}
+          {/* Alt Kontrol Çubuğu (Ekran 7: 3 Yuvarlak Buton + Kırmızı Ayrıl Butonu) */}
           <View style={styles.actionBar}>
-            {/* Toggle Mute */}
+            {/* Mikrofon */}
             <TouchableOpacity
-              style={[styles.actionBtn, isMuted ? styles.actionBtnMuted : styles.actionBtnActive]}
+              style={[
+                styles.actionBtn,
+                !isMuted ? styles.actionBtnWhite : styles.actionBtnDark,
+                isMuted && styles.actionBtnMuted,
+              ]}
               onPress={toggleMute}
-              activeOpacity={0.8}
+              activeOpacity={0.7}
             >
               <Ionicons
                 name={isMuted ? 'mic-off' : 'mic'}
-                size={26}
-                color="#ffffff"
+                size={24}
+                color={!isMuted ? '#0B0F1A' : '#EF4444'}
               />
-              <Text style={styles.actionBtnText}>
-                {isMuted ? 'Susturuldu' : 'Mikrofon'}
-              </Text>
             </TouchableOpacity>
 
-            {/* Toggle Video */}
+            {/* Kamera */}
             <TouchableOpacity
-              style={[styles.actionBtn, isVideoOn && styles.actionBtnActive]}
+              style={[
+                styles.actionBtn,
+                isVideoOn ? styles.actionBtnWhite : styles.actionBtnDark,
+              ]}
               onPress={toggleVideo}
-              activeOpacity={0.8}
+              activeOpacity={0.7}
             >
               <Ionicons
                 name={isVideoOn ? 'videocam' : 'videocam-off'}
-                size={26}
-                color="#ffffff"
+                size={24}
+                color={isVideoOn ? '#0B0F1A' : '#FFFFFF'}
               />
-              <Text style={styles.actionBtnText}>Kamera</Text>
             </TouchableOpacity>
 
-            {/* Leave Voice */}
-            <TouchableOpacity style={styles.leaveBtn} onPress={handleLeave} activeOpacity={0.8}>
-              <Ionicons name="call" size={26} color="#ffffff" />
-              <Text style={styles.actionBtnText}>Ayrıl</Text>
+            {/* Hoparlör */}
+            <TouchableOpacity
+              style={[
+                styles.actionBtn,
+                speakerOn ? styles.actionBtnWhite : styles.actionBtnDark,
+              ]}
+              onPress={handleToggleSpeaker}
+              activeOpacity={0.7}
+            >
+              <Ionicons
+                name={speakerOn ? 'volume-high' : 'volume-medium'}
+                size={24}
+                color={speakerOn ? '#0B0F1A' : '#FFFFFF'}
+              />
+            </TouchableOpacity>
+
+            {/* Ayrıl (Elongated Kırmızı Pill Butonu) */}
+            <TouchableOpacity
+              style={styles.leavePillBtn}
+              onPress={handleLeave}
+              activeOpacity={0.8}
+            >
+              <Ionicons
+                name="call"
+                size={22}
+                color="#FFFFFF"
+                style={{ transform: [{ rotate: '135deg' }] }}
+              />
+              <Text style={styles.leaveBtnText}>Ayrıl</Text>
             </TouchableOpacity>
           </View>
         </SafeAreaView>
@@ -146,158 +240,169 @@ export const VoiceRoomSheet: React.FC<VoiceRoomSheetProps> = ({
 const styles = StyleSheet.create({
   overlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    backgroundColor: 'rgba(0, 0, 0, 0.75)',
     justifyContent: 'flex-end',
   },
   sheetContainer: {
-    backgroundColor: colors.surfaceElevated, // #1A243B
+    backgroundColor: '#0D1322', // Ekran 7 Koyu Lacivert
     borderTopLeftRadius: 28,
     borderTopRightRadius: 28,
     paddingHorizontal: 20,
     paddingTop: 12,
-    minHeight: 440,
+    paddingBottom: 20,
+    minHeight: 460,
     borderTopWidth: 1,
-    borderTopColor: colors.borderLight,
+    borderTopColor: '#1A243A',
   },
   dragHandle: {
     width: 36,
     height: 4,
     borderRadius: 2,
-    backgroundColor: colors.borderLight,
+    backgroundColor: '#223048',
     alignSelf: 'center',
-    marginBottom: 12,
+    marginBottom: 16,
   },
   sheetHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingBottom: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
+    alignItems: 'flex-start',
   },
   liveBadgeRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
+    gap: 8,
   },
-  livePulseDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: colors.online,
+  liveTripleDots: {
+    flexDirection: 'column',
+    alignItems: 'center',
+    gap: 3,
+  },
+  liveDot: {
+    width: 3.5,
+    height: 3.5,
+    borderRadius: 2,
+    backgroundColor: '#10B981',
   },
   liveBadge: {
-    color: colors.primaryLight,
-    fontSize: 11,
+    color: '#10B981',
+    fontSize: 12,
     fontWeight: '800',
-    letterSpacing: 0.5,
+    letterSpacing: 0.8,
   },
   roomTitle: {
-    color: colors.textPrimary,
-    fontSize: 19,
+    color: '#FFFFFF',
+    fontSize: 24,
     fontWeight: '700',
-    marginTop: 2,
+    marginTop: 6,
+    letterSpacing: -0.4,
   },
   closeBtn: {
-    padding: 6,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#141C2C',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  countText: {
+    color: '#7E8BA6',
+    fontSize: 13,
+    fontWeight: '500',
+    marginTop: 6,
+    marginBottom: 28,
   },
   participantsArea: {
     flex: 1,
-    paddingVertical: 12,
+    justifyContent: 'center',
+    paddingVertical: 16,
   },
-  countText: {
-    color: colors.textSecondary,
-    fontSize: 13,
-    textAlign: 'center',
-    fontWeight: '500',
+  participantsRow: {
+    flexDirection: 'row',
+    justifyContent: 'flex-start',
+    gap: 32,
+    paddingHorizontal: 12,
+    flexWrap: 'wrap',
   },
-  participantCard: {
+  participantItem: {
     alignItems: 'center',
     width: 90,
   },
-  avatarWrapper: {
-    position: 'relative',
-    padding: 4,
-    borderRadius: 40,
-  },
-  speakingHalo: {
-    borderWidth: 2.5,
-    borderColor: colors.online,
-  },
-  avatarCircle: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
-    backgroundColor: colors.surface,
-    justifyContent: 'center',
+  speakerRow: {
+    flexDirection: 'row',
     alignItems: 'center',
-    borderWidth: 1.5,
-    borderColor: colors.borderLight,
+    gap: 4,
+    marginTop: 8,
   },
-  avatarText: {
-    color: colors.primaryLight,
-    fontSize: 22,
-    fontWeight: '700',
-  },
-  mutedBadge: {
-    position: 'absolute',
-    bottom: 2,
-    right: 2,
-    backgroundColor: colors.error,
-    width: 22,
-    height: 22,
-    borderRadius: 11,
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 2,
-    borderColor: colors.surfaceElevated,
-  },
-  participantName: {
-    color: colors.textPrimary,
-    fontSize: 12,
+  participantLabel: {
+    color: '#FFFFFF',
+    fontSize: 14,
     fontWeight: '600',
-    marginTop: 6,
-    textAlign: 'center',
+  },
+  inviteDashedBtn: {
+    width: 84,
+    height: 84,
+    borderRadius: 42,
+    borderWidth: 1.5,
+    borderColor: '#1E2B45',
+    borderStyle: 'dashed',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(30, 43, 69, 0.2)',
+  },
+  inviteLabel: {
+    color: '#38BDF8',
+    fontSize: 14,
+    fontWeight: '600',
+    marginTop: 8,
   },
   actionBar: {
     flexDirection: 'row',
-    justifyContent: 'space-around',
-    paddingTop: 16,
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingTop: 20,
     paddingBottom: 8,
-    borderTopWidth: 1,
-    borderTopColor: colors.border,
+    gap: 12,
   },
   actionBtn: {
+    width: 54,
+    height: 54,
+    borderRadius: 27,
     alignItems: 'center',
     justifyContent: 'center',
-    width: 76,
-    height: 76,
-    borderRadius: 38,
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.borderLight,
   },
-  actionBtnActive: {
-    backgroundColor: colors.primary, // #2563EB
-    borderColor: colors.primaryLight,
+  actionBtnDark: {
+    backgroundColor: '#151E31',
+    borderWidth: 1,
+    borderColor: '#22304C',
+  },
+  actionBtnWhite: {
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#FFFFFF',
   },
   actionBtnMuted: {
-    backgroundColor: colors.surface,
-    borderColor: colors.border,
+    backgroundColor: '#1E2536',
+    borderWidth: 1,
+    borderColor: '#EF4444',
   },
-  actionBtnText: {
-    color: colors.textPrimary,
-    fontSize: 11,
-    fontWeight: '600',
-    marginTop: 4,
-  },
-  leaveBtn: {
+  leavePillBtn: {
+    flex: 1,
+    height: 54,
+    borderRadius: 27,
+    backgroundColor: '#EF4444',
+    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    width: 76,
-    height: 76,
-    borderRadius: 38,
-    backgroundColor: colors.error,
-    transform: [{ rotate: '135deg' }],
+    gap: 8,
+    shadowColor: '#EF4444',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.35,
+    shadowRadius: 8,
+    elevation: 6,
+  },
+  leaveBtnText: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: '700',
   },
 });
