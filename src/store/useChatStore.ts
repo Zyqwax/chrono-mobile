@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { Alert } from 'react-native';
+import { Alert, Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   Contact,
@@ -212,7 +212,10 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       const pushToken = await registerForPushNotificationsAsync();
       if (pushToken) {
         console.log('📲 [syncPushToken] Push token sunucuya gönderiliyor (PUT /users/me/push-token):', pushToken);
-        const res = await api.put('/users/me/push-token', { pushToken });
+        const res = await api.put('/users/me/push-token', {
+          pushToken,
+          platform: Platform.OS,
+        });
         if (res.data) {
           set((state) => {
             const nextUser = state.currentUser ? { ...state.currentUser, pushToken } : null;
