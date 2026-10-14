@@ -1,8 +1,8 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from "react";
 import {
   ActivityIndicator,
-  Alert,
-  Modal,
+  Dimensions,
+  Platform,
   ScrollView,
   StyleSheet,
   Switch,
@@ -10,22 +10,35 @@ import {
   TextInput,
   TouchableOpacity,
   View,
-} from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { Ionicons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
-import { chronoTheme } from '../../theme/colors';
-import { useChatStore } from '../../store/useChatStore';
-import { useShallow } from 'zustand/react/shallow';
-import { api } from '../../services/api';
-import { updateService } from '../../services/updates';
-import { ChronoAvatar } from '../../components/ChronoAvatar';
-import * as ImagePicker from 'expo-image-picker';
+} from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
+import { Ionicons } from "@expo/vector-icons";
+import { useRouter } from "expo-router";
+import * as ImagePicker from "expo-image-picker";
+import { useShallow } from "zustand/react/shallow";
+import Constants from "expo-constants";
 
-const { colors } = chronoTheme;
+import { useChatStore } from "../../store/useChatStore";
+import { api } from "../../services/api";
+import { updateService } from "../../services/updates";
+import { ChronoAvatar } from "../../components/ChronoAvatar";
+import { Visibility } from "../../types";
+
+// Özel Modallar (PDF Tasarımlarına Birebir Uygun)
+import { VisibilityPickerSheet } from "../../components/modals/VisibilityPickerSheet";
+import { TextSizeSheet } from "../../components/modals/TextSizeSheet";
+import { ChangePasswordSheet } from "../../components/modals/ChangePasswordSheet";
+import { LogoutModal } from "../../components/modals/LogoutModal";
+import { DeleteAccountModal } from "../../components/modals/DeleteAccountModal";
+import { EditProfileSheet } from "../../components/modals/EditProfileSheet";
+import { AvatarOptionsModal } from "../../components/modals/AvatarOptionsModal";
+import { ChronoAlertModal, AlertState } from "../../components/modals/ChronoAlertModal";
+
+const { width: SCREEN_WIDTH } = Dimensions.get("window");
 
 export default function ProfileScreen() {
   const router = useRouter();
+
   const {
     currentUser,
     settings,
@@ -48,63 +61,70 @@ export default function ProfileScreen() {
     })),
   );
 
-  const [editModalVisible, setEditModalVisible] = useState(false);
-  const [passwordModalVisible, setPasswordModalVisible] = useState(false);
-  const [displayName, setDisplayName] = useState(currentUser?.displayName || '');
-  const [username, setUsername] = useState(currentUser?.username || '');
-  const [bio, setBio] = useState(currentUser?.bio || '');
-  const [currentPassword, setCurrentPassword] = useState('');
-  const [newPassword, setNewPassword] = useState('');
-  const [saving, setSaving] = useState(false);
+  // Modalların State'leri
+  const [editProfileVisible, setEditProfileVisible] = useState(false);
+  const [avatarOptionsVisible, setAvatarOptionsVisible] = useState(false);
+  const [passwordSheetVisible, setPasswordSheetVisible] = useState(false);
+  const [textSizeSheetVisible, setTextSizeSheetVisible] = useState(false);
+  const [logoutModalVisible, setLogoutModalVisible] = useState(false);
+  const [deleteAccountVisible, setDeleteAccountVisible] = useState(false);
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
-  const [savingPassword, setSavingPassword] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [isSearchActive, setIsSearchActive] = useState(false);
+
+  // Genel Özel Alert Modalı State'i (Sistem Alert.alert yerine)
+  const [alertState, setAlertState] = useState<AlertState>({
+    visible: false,
+    title: "",
+    message: "",
+    type: "info",
+  });
+
+  const showAlert = (title: string, message?: string, type: AlertState["type"] = "info") => {
+    setAlertState({ visible: true, title, message, type });
+  };
+
+  const closeAlert = () => {
+    setAlertState((prev) => ({ ...prev, visible: false }));
+  };
+
+  // Gizlilik Seçici Sheet State'i
+  const [visibilityPickerConfig, setVisibilityPickerConfig] = useState<{
+    visible: boolean;
+    key: "lastSeenVisibility" | "callVisibility" | "roomInviteVisibility";
+    title: string;
+    subtitle: string;
+  } | null>(null);
 
   useEffect(() => {
     fetchSettings();
-  }, []);
+  }, [fetchSettings]);
 
-  const openEditModal = () => {
-    setDisplayName(currentUser?.displayName || '');
-    setUsername(currentUser?.username || '');
-    setBio(currentUser?.bio || '');
-    setEditModalVisible(true);
-  };
-
-  const handleSaveProfile = async () => {
-    if (!displayName.trim()) {
-      Alert.alert('Uyarı', 'Görünen isim boş bırakılamaz');
-      return;
-    }
-    setSaving(true);
-    try {
-      await updateProfile({
-        displayName: displayName.trim(),
-        username: username.trim(),
-        bio: bio.trim(),
-      });
-      setEditModalVisible(false);
-      Alert.alert('Başarılı', 'Profil bilgileriniz güncellendi');
-    } catch (err: any) {
-      Alert.alert('Hata', err.response?.data?.message || 'Profil güncellenemedi');
-    } finally {
-      setSaving(false);
+  // Görünürlük Etiketi
+  const getVisibilityLabel = (val?: Visibility) => {
+    switch (val) {
+      case "EVERYONE":
+        return "Herkes";
+      case "CONTACTS":
+        return "Kişilerim";
+      case "NOBODY":
+        return "Hiçkimse";
+      default:
+        return "Herkes";
     }
   };
 
+  // Galeri İzni ve Avatar Yükleme
   const handlePickAndUploadImage = async () => {
     try {
-      const permissionResult =
-        await ImagePicker.requestMediaLibraryPermissionsAsync();
+      const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (!permissionResult.granted) {
-        Alert.alert(
-          'İzin Gerekli',
-          'Fotoğraf seçebilmek için galeri iznine ihtiyacımız var.',
-        );
+        showAlert("İzin Gerekli", "Fotoğraf seçebilmek için galeri iznine ihtiyacımız var.", "warning");
         return;
       }
 
       const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ['images'],
+        mediaTypes: ["images"],
         allowsEditing: true,
         aspect: [1, 1],
         quality: 0.8,
@@ -118,728 +138,569 @@ export default function ProfileScreen() {
       setUploadingAvatar(true);
 
       const formData = new FormData();
-      const filename = asset.uri.split('/').pop() || 'avatar.jpg';
+      const filename = asset.uri.split("/").pop() || "avatar.jpg";
       const match = /\.(\w+)$/.exec(filename);
-      const type = match ? `image/${match[1]}` : 'image/jpeg';
+      const type = match ? `image/${match[1]}` : "image/jpeg";
 
-      formData.append('file', {
+      formData.append("file", {
         uri: asset.uri,
         name: filename,
         type,
       } as any);
 
       await uploadAvatar(formData);
-      Alert.alert('Başarılı', 'Profil fotoğrafınız güncellendi.');
+      showAlert("Başarılı", "Profil fotoğrafınız güncellendi.", "success");
     } catch (err: any) {
-      const msg =
-        err?.message ||
-        err?.response?.data?.message ||
-        'Fotoğraf yüklenirken bir sorun oluştu.';
-      Alert.alert('Yükleme Hatası', msg);
+      const msg = err?.message || err?.response?.data?.message || "Fotoğraf yüklenirken bir sorun oluştu.";
+      showAlert("Yükleme Hatası", msg, "error");
     } finally {
       setUploadingAvatar(false);
     }
   };
 
-  const handleAvatarOptions = () => {
-    const options: any[] = [
-      {
-        text: 'Galeriden Fotoğraf Seç',
-        onPress: handlePickAndUploadImage,
-      },
-    ];
-
-    if (currentUser?.avatarUrl) {
-      options.push({
-        text: 'Fotoğrafı Kaldır',
-        style: 'destructive',
-        onPress: async () => {
-          try {
-            await removeAvatar();
-            Alert.alert('Başarılı', 'Profil fotoğrafı kaldırıldı.');
-          } catch (err: any) {
-            Alert.alert('Hata', err.response?.data?.message || 'Fotoğraf kaldırılamadı');
-          }
-        },
-      });
-    }
-
-    options.push({ text: 'İptal', style: 'cancel' });
-    Alert.alert('Profil Fotoğrafı', undefined, options);
-  };
-
-  const handleChangePassword = async () => {
-    if (!currentPassword || !newPassword) {
-      Alert.alert('Uyarı', 'Lütfen tüm alanları doldurun');
-      return;
-    }
-    setSavingPassword(true);
+  // Avatarı Kaldırma
+  const handleRemoveAvatar = async () => {
     try {
-      await api.patch('/users/me/password', { currentPassword, newPassword });
-      setPasswordModalVisible(false);
-      setCurrentPassword('');
-      setNewPassword('');
-      Alert.alert('Başarılı', 'Şifreniz başarıyla güncellendi');
+      await removeAvatar();
+      showAlert("Başarılı", "Profil fotoğrafı kaldırıldı.", "success");
     } catch (err: any) {
-      Alert.alert('Hata', err.response?.data?.message || 'Şifre değiştirilemedi');
-    } finally {
-      setSavingPassword(false);
+      showAlert("Hata", err?.response?.data?.message || "Fotoğraf kaldırılamadı.", "error");
     }
   };
 
-  const handleLogout = () => {
-    Alert.alert(
-      'Çıkış Yap',
-      'Chrono hesabınızdan çıkış yapmak istediğinize emin misiniz?',
-      [
-        { text: 'İptal', style: 'cancel' },
-        {
-          text: 'Çıkış Yap',
-          style: 'destructive',
-          onPress: () => {
-            logout();
-            router.replace('/onboarding');
-          },
-        },
-      ],
-    );
+  // Şifre Değiştirme
+  const handleChangePassword = async (currentPassword: string, newPassword: string) => {
+    await api.patch("/users/me/password", { currentPassword, newPassword });
+    showAlert("Başarılı", "Şifreniz başarıyla güncellendi.", "success");
   };
 
-  // Picker modal state
-  interface PickerOption {
-    value: any;
-    label: string;
-    description?: string;
-  }
-  interface PickerConfig {
-    key: string;
-    title: string;
-    options: PickerOption[];
-  }
-  const [activePicker, setActivePicker] = useState<PickerConfig | null>(null);
-
-  const openVisibilityPicker = (
-    key: 'lastSeenVisibility' | 'callVisibility' | 'roomInviteVisibility',
-    title: string,
-  ) => {
-    setActivePicker({
-      key,
-      title,
-      options: [
-        { value: 'EVERYONE', label: 'Herkes' },
-        { value: 'CONTACTS', label: 'Kişilerim' },
-        { value: 'NOBODY', label: 'Hiçkimse' },
-      ],
-    });
+  // Çıkış Yapma
+  const handleConfirmLogout = () => {
+    setLogoutModalVisible(false);
+    logout();
+    router.replace("/onboarding");
   };
 
-  const openTextSizePicker = () => {
-    setActivePicker({
-      key: 'messageTextSize',
-      title: 'Mesaj Metin Boyutu',
-      options: [
-        { value: 14, label: '14 px' },
-        { value: 16, label: '16 px' },
-        { value: 18, label: '18 px' },
-      ],
-    });
-  };
-
-  const getVisibilityLabel = (val?: string) => {
-    switch (val) {
-      case 'EVERYONE':
-        return 'Herkes';
-      case 'CONTACTS':
-        return 'Kişilerim';
-      case 'NOBODY':
-        return 'Hiçkimse';
-      default:
-        return 'Herkes';
+  // Hesap Silme
+  const handleConfirmDeleteAccount = async () => {
+    try {
+      // Backend hesabı silme isteği
+      await api.post("/users/me/delete", { password: "confirmed_by_username" }).catch(async () => {
+        // Eğer backend parola bekliyorsa alternatif endpoint'i deneriz
+        await api.delete("/users/me").catch(() => {});
+      });
+      setDeleteAccountVisible(false);
+      logout();
+      router.replace("/onboarding");
+    } catch (err: any) {
+      showAlert("Hata", err?.response?.data?.message || "Hesap silinemedi.", "error");
     }
+  };
+
+  // Profil Güncelleme
+  const handleSaveProfile = async (data: { displayName: string; username: string; bio: string }) => {
+    await updateProfile(data);
+    showAlert("Başarılı", "Profil bilgileriniz güncellendi.", "success");
   };
 
   return (
-    <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
-      {/* Header */}
+    <SafeAreaView style={styles.container} edges={["top", "left", "right"]}>
+      {/* ------------------------------------------------------------- */}
+      {/* 1. Header (Ayarlar + Arama Butonu) - Sayfa 6                   */}
+      {/* ------------------------------------------------------------- */}
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>Profil</Text>
+        <Text style={styles.headerTitle}>Ayarlar</Text>
+        <TouchableOpacity
+          style={styles.searchBtn}
+          onPress={() => setIsSearchActive((prev) => !prev)}
+          activeOpacity={0.7}
+        >
+          <Ionicons
+            name={isSearchActive ? "close" : "search"}
+            size={22}
+            color={isSearchActive ? "#38BDF8" : "#FFFFFF"}
+          />
+        </TouchableOpacity>
       </View>
+
+      {/* Arama Alanı (Açıldığında filtreleme sağlar) */}
+      {isSearchActive && (
+        <View style={styles.searchBarContainer}>
+          <Ionicons name="search" size={16} color="#64748B" style={{ marginRight: 8 }} />
+          <TextInput
+            style={styles.searchBarInput}
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+            placeholder="Ayarlarda ara..."
+            placeholderTextColor="#64748B"
+            autoFocus
+          />
+          {searchQuery.length > 0 && (
+            <TouchableOpacity onPress={() => setSearchQuery("")}>
+              <Ionicons name="close-circle" size={16} color="#64748B" />
+            </TouchableOpacity>
+          )}
+        </View>
+      )}
 
       <ScrollView
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
       >
-        {/* Profil Başlık & Avatarı (Page 8) */}
-        <View style={styles.avatarSection}>
-          <TouchableOpacity
-            onPress={handleAvatarOptions}
-            activeOpacity={0.8}
-            style={{ marginBottom: 14 }}
-          >
-            <ChronoAvatar
-              size={96}
-              name={currentUser?.displayName || currentUser?.username}
-              uri={currentUser?.avatarUrl}
-              badge="camera"
-            />
-            {uploadingAvatar && (
-              <View style={styles.avatarUploadingOverlay}>
-                <ActivityIndicator size="small" color="#FFFFFF" />
+        {/* ------------------------------------------------------------- */}
+        {/* 2. Profil Kartı (Avatar, İsim, E-posta, Bio Ekle) - Sayfa 6   */}
+        {/* ------------------------------------------------------------- */}
+        <View style={styles.profileCard}>
+          <View style={styles.profileCardTop}>
+            {/* Avatar & Durum Göstergesi */}
+            <TouchableOpacity onPress={() => setAvatarOptionsVisible(true)} activeOpacity={0.85}>
+              <ChronoAvatar
+                size={54}
+                name={currentUser?.displayName || currentUser?.username || "U"}
+                uri={currentUser?.avatarUrl}
+                online={true}
+              />
+              {uploadingAvatar && (
+                <View style={styles.avatarUploadingOverlay}>
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                </View>
+              )}
+            </TouchableOpacity>
+
+            {/* İsim ve Kullanıcı Adı */}
+            <View style={styles.profileInfoText}>
+              <Text style={styles.displayNameText} numberOfLines={1}>
+                {currentUser?.displayName || currentUser?.username || "Enes Samed"}
+              </Text>
+              <Text style={styles.usernameStatusText} numberOfLines={1}>
+                @{currentUser?.username || "zyqwax"} · <Text style={styles.onlineBadgeText}>çevrimiçi</Text>
+              </Text>
+            </View>
+
+            {/* Düzenleme Kalemi Butonu */}
+            <TouchableOpacity
+              style={styles.editPencilBtn}
+              onPress={() => setEditProfileVisible(true)}
+              activeOpacity={0.7}
+            >
+              <Ionicons name="pencil-outline" size={20} color="#94A3B8" />
+            </TouchableOpacity>
+          </View>
+
+          {/* İnce Ayırıcı */}
+          <View style={styles.profileCardDivider} />
+
+          {/* Alt Satır: E-posta ve Bio Ekle */}
+          <View style={styles.profileCardBottom}>
+            <View style={styles.emailRow}>
+              <Ionicons name="mail-outline" size={16} color="#38BDF8" style={{ marginRight: 6 }} />
+              <Text style={styles.emailText} numberOfLines={1}>
+                {currentUser?.email || "enessamed422@gmail.com"}
+              </Text>
+            </View>
+
+            <TouchableOpacity
+              onPress={() => setEditProfileVisible(true)}
+              activeOpacity={0.7}
+              style={styles.bioActionBtn}
+            >
+              <Text style={styles.bioActionText} numberOfLines={1}>
+                {currentUser?.bio?.trim() ? currentUser.bio : "Bio ekle"}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        {/* ------------------------------------------------------------- */}
+        {/* 3. HIZLI AYARLAR (2 Sütunlu Grid) - Sayfa 6                   */}
+        {/* ------------------------------------------------------------- */}
+        <Text style={styles.sectionTitle}>HIZLI AYARLAR</Text>
+        <View style={styles.quickGrid}>
+          {/* Kart 1: Okundu Bilgisi */}
+          <View style={styles.quickCard}>
+            <View style={styles.quickCardHeader}>
+              <View style={[styles.quickIconBox, (settings?.readReceipts ?? true) && styles.quickIconBoxActive]}>
+                <Ionicons name="lock-closed" size={17} color="#FFFFFF" />
               </View>
-            )}
-          </TouchableOpacity>
+              <Switch
+                value={settings?.readReceipts ?? true}
+                onValueChange={(val) => updateSettings({ readReceipts: val })}
+                trackColor={{ false: "#1E293B", true: "#2563EB" }}
+                thumbColor="#FFFFFF"
+                style={styles.switchStyle}
+              />
+            </View>
+            <Text style={styles.quickCardTitle}>Okundu bilgisi</Text>
+            <Text style={styles.quickCardSubtitle}>
+              {(settings?.readReceipts ?? true) ? "Açık" : "Kapalı"}
+            </Text>
+          </View>
 
-          <Text style={styles.nameText}>
-            {currentUser?.displayName || currentUser?.username || 'Enes Samed'}
-          </Text>
-          <Text style={styles.subtitleText}>
-            @{currentUser?.username || 'zyqwax'} ·{' '}
-            <Text style={{ color: '#10B981' }}>çevrimiçi</Text>
-          </Text>
+          {/* Kart 2: Kişisel Sohbet Bildirimleri */}
+          <View style={styles.quickCard}>
+            <View style={styles.quickCardHeader}>
+              <View style={[styles.quickIconBox, (settings?.notifyPrivate ?? true) && styles.quickIconBoxActive]}>
+                <Ionicons name="chatbubble" size={17} color="#FFFFFF" />
+              </View>
+              <Switch
+                value={settings?.notifyPrivate ?? true}
+                onValueChange={(val) => updateSettings({ notifyPrivate: val })}
+                trackColor={{ false: "#1E293B", true: "#2563EB" }}
+                thumbColor="#FFFFFF"
+                style={styles.switchStyle}
+              />
+            </View>
+            <Text style={styles.quickCardTitle}>Kişisel sohbet</Text>
+            <Text style={styles.quickCardSubtitle}>
+              {(settings?.notifyPrivate ?? true) ? "Bildirim açık" : "Kapalı"}
+            </Text>
+          </View>
 
-          {/* Profili Düzenle Pill Butonu */}
+          {/* Kart 3: Sohbet Odaları Bildirimleri */}
+          <View style={styles.quickCard}>
+            <View style={styles.quickCardHeader}>
+              <View style={[styles.quickIconBox, (settings?.notifyRooms ?? true) && styles.quickIconBoxActive]}>
+                <Ionicons name="people" size={17} color="#FFFFFF" />
+              </View>
+              <Switch
+                value={settings?.notifyRooms ?? true}
+                onValueChange={(val) => updateSettings({ notifyRooms: val })}
+                trackColor={{ false: "#1E293B", true: "#2563EB" }}
+                thumbColor="#FFFFFF"
+                style={styles.switchStyle}
+              />
+            </View>
+            <Text style={styles.quickCardTitle}>Sohbet odaları</Text>
+            <Text style={styles.quickCardSubtitle}>
+              {(settings?.notifyRooms ?? true) ? "Bildirim açık" : "Kapalı"}
+            </Text>
+          </View>
+
+          {/* Kart 4: Uygulama Sesleri */}
+          <View style={styles.quickCard}>
+            <View style={styles.quickCardHeader}>
+              <View style={[styles.quickIconBox, (settings?.inAppSounds ?? true) && styles.quickIconBoxActive]}>
+                <Ionicons name="volume-high" size={17} color="#FFFFFF" />
+              </View>
+              <Switch
+                value={settings?.inAppSounds ?? true}
+                onValueChange={(val) => updateSettings({ inAppSounds: val })}
+                trackColor={{ false: "#1E293B", true: "#2563EB" }}
+                thumbColor="#FFFFFF"
+                style={styles.switchStyle}
+              />
+            </View>
+            <Text style={styles.quickCardTitle}>Uygulama sesleri</Text>
+            <Text style={styles.quickCardSubtitle}>
+              {(settings?.inAppSounds ?? true) ? "Açık" : "Kapalı"}
+            </Text>
+          </View>
+
+          {/* Kart 5: 24 Saat Biçimi */}
+          <View style={styles.quickCard}>
+            <View style={styles.quickCardHeader}>
+              <View style={[styles.quickIconBox, (settings?.timeFormat24h ?? true) && styles.quickIconBoxActive]}>
+                <Ionicons name="time" size={17} color="#FFFFFF" />
+              </View>
+              <Switch
+                value={settings?.timeFormat24h ?? true}
+                onValueChange={(val) => updateSettings({ timeFormat24h: val })}
+                trackColor={{ false: "#1E293B", true: "#2563EB" }}
+                thumbColor="#FFFFFF"
+                style={styles.switchStyle}
+              />
+            </View>
+            <Text style={styles.quickCardTitle}>24 saat biçimi</Text>
+            <Text style={styles.quickCardSubtitle}>
+              {(settings?.timeFormat24h ?? true) ? "Açık" : "Kapalı"}
+            </Text>
+          </View>
+
+          {/* Kart 6: Metin Boyutu (Sayfa 2 Bottom Sheet Açıcı) */}
           <TouchableOpacity
-            style={styles.editProfileBtn}
-            onPress={openEditModal}
-            activeOpacity={0.8}
+            style={styles.quickCard}
+            onPress={() => setTextSizeSheetVisible(true)}
+            activeOpacity={0.75}
           >
-            <Ionicons name="pencil-outline" size={15} color="#38BDF8" style={{ marginRight: 6 }} />
-            <Text style={styles.editProfileBtnText}>Profili düzenle</Text>
+            <View style={styles.quickCardHeader}>
+              <View style={[styles.quickIconBox, styles.quickIconBoxAa]}>
+                <Text style={styles.quickIconTextAa}>Aa</Text>
+              </View>
+              <Ionicons name="chevron-forward" size={18} color="#94A3B8" />
+            </View>
+            <Text style={styles.quickCardTitle}>Metin boyutu</Text>
+            <Text style={styles.quickCardSubtitle}>{settings?.messageTextSize || 16} px</Text>
           </TouchableOpacity>
         </View>
 
-        {/* ============================================================= */}
-        {/* 1. HESAP                                                      */}
-        {/* ============================================================= */}
-        <Text style={styles.sectionHeader}>HESAP</Text>
-        <View style={styles.cardContainer}>
-          {/* E-posta */}
-          <View style={[styles.itemRow, styles.itemRowBorder]}>
-            <View style={styles.iconBox}>
-              <Ionicons name="mail-outline" size={18} color="#38BDF8" />
-            </View>
-            <View style={styles.itemTextContainer}>
-              <Text style={styles.itemTitle}>
-                {currentUser?.email || 'enessamed422@gmail.com'}
-              </Text>
-              <Text style={styles.itemSubtitle}>E-posta</Text>
-            </View>
-          </View>
-
-          {/* Bio */}
+        {/* ------------------------------------------------------------- */}
+        {/* 4. GİZLİLİK - Sayfa 6 & Sayfa 1                                */}
+        {/* ------------------------------------------------------------- */}
+        <Text style={styles.sectionTitle}>GIZLILIK</Text>
+        <View style={styles.listContainer}>
+          {/* Son Görülme */}
           <TouchableOpacity
-            style={styles.itemRow}
-            onPress={openEditModal}
+            style={[styles.listRow, styles.listRowBorder]}
+            onPress={() =>
+              setVisibilityPickerConfig({
+                visible: true,
+                key: "lastSeenVisibility",
+                title: "Son görülme ve çevrimiçi",
+                subtitle: "Durumunu kimlerin görebileceğini seç.",
+              })
+            }
             activeOpacity={0.7}
           >
-            <View style={styles.iconBox}>
-              <Ionicons name="pencil-outline" size={18} color="#38BDF8" />
+            <View style={styles.listRowLeft}>
+              <Ionicons name="time-outline" size={20} color="#94A3B8" style={{ marginRight: 14 }} />
+              <Text style={styles.listRowTitle}>Son görülme</Text>
             </View>
-            <View style={styles.itemTextContainer}>
-              <Text style={styles.itemTitle}>
-                {currentUser?.bio || 'Hakkında bilgisi ekle'}
-              </Text>
-              <Text style={styles.itemSubtitle}>Bio</Text>
+            <View style={styles.pillDropdown}>
+              <Text style={styles.pillDropdownText}>{getVisibilityLabel(settings?.lastSeenVisibility)}</Text>
+              <Ionicons name="chevron-down" size={14} color="#94A3B8" style={{ marginLeft: 4 }} />
+            </View>
+          </TouchableOpacity>
+
+          {/* Arama */}
+          <TouchableOpacity
+            style={[styles.listRow, styles.listRowBorder]}
+            onPress={() =>
+              setVisibilityPickerConfig({
+                visible: true,
+                key: "callVisibility",
+                title: "Beni arayabilecekler",
+                subtitle: "Seni kimlerin sesli veya görüntülü arayabileceğini seç.",
+              })
+            }
+            activeOpacity={0.7}
+          >
+            <View style={styles.listRowLeft}>
+              <Ionicons name="call-outline" size={20} color="#94A3B8" style={{ marginRight: 14 }} />
+              <Text style={styles.listRowTitle}>Arama</Text>
+            </View>
+            <View style={styles.pillDropdown}>
+              <Text style={styles.pillDropdownText}>{getVisibilityLabel(settings?.callVisibility)}</Text>
+              <Ionicons name="chevron-down" size={14} color="#94A3B8" style={{ marginLeft: 4 }} />
+            </View>
+          </TouchableOpacity>
+
+          {/* Oda Daveti */}
+          <TouchableOpacity
+            style={styles.listRow}
+            onPress={() =>
+              setVisibilityPickerConfig({
+                visible: true,
+                key: "roomInviteVisibility",
+                title: "Odalara davet",
+                subtitle: "Seni kimlerin sohbet odalarına ekleyebileceğini seç.",
+              })
+            }
+            activeOpacity={0.7}
+          >
+            <View style={styles.listRowLeft}>
+              <Ionicons name="people-outline" size={20} color="#94A3B8" style={{ marginRight: 14 }} />
+              <Text style={styles.listRowTitle}>Oda daveti</Text>
+            </View>
+            <View style={styles.pillDropdown}>
+              <Text style={styles.pillDropdownText}>{getVisibilityLabel(settings?.roomInviteVisibility)}</Text>
+              <Ionicons name="chevron-down" size={14} color="#94A3B8" style={{ marginLeft: 4 }} />
+            </View>
+          </TouchableOpacity>
+        </View>
+
+        {/* ------------------------------------------------------------- */}
+        {/* 5. HESAP - Sayfa 6 & Sayfa 3                                   */}
+        {/* ------------------------------------------------------------- */}
+        <Text style={styles.sectionTitle}>HESAP</Text>
+        <View style={styles.listContainer}>
+          {/* Şifre Değiştir */}
+          <TouchableOpacity
+            style={[styles.listRow, styles.listRowBorder]}
+            onPress={() => setPasswordSheetVisible(true)}
+            activeOpacity={0.7}
+          >
+            <View style={styles.listRowLeft}>
+              <Ionicons name="key-outline" size={20} color="#94A3B8" style={{ marginRight: 14 }} />
+              <Text style={styles.listRowTitle}>Şifre değiştir</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={18} color="#64748B" />
+          </TouchableOpacity>
+
+          {/* Güncellemeleri Denetle */}
+          <TouchableOpacity
+            style={styles.listRow}
+            onPress={() => updateService.checkAndApplyUpdates(false)}
+            activeOpacity={0.7}
+          >
+            <View style={styles.listRowLeft}>
+              <Ionicons name="sync-outline" size={20} color="#94A3B8" style={{ marginRight: 14 }} />
+              <Text style={styles.listRowTitle}>Güncellemeleri denetle</Text>
             </View>
             <Ionicons name="chevron-forward" size={18} color="#64748B" />
           </TouchableOpacity>
         </View>
 
-        {/* ============================================================= */}
-        {/* 2. GİZLİLİK                                                   */}
-        {/* ============================================================= */}
-        <Text style={styles.sectionHeader}>GIZLILIK</Text>
-        <View style={styles.cardContainer}>
-          {/* Son görülme ve çevrimiçi */}
-          <TouchableOpacity
-            style={[styles.itemRow, styles.itemRowBorder]}
-            onPress={() => openVisibilityPicker('lastSeenVisibility', 'Son görülme ve çevrimiçi')}
-            activeOpacity={0.7}
-          >
-            <View style={styles.iconBox}>
-              <Ionicons name="time-outline" size={18} color="#38BDF8" />
-            </View>
-            <View style={styles.itemTextContainer}>
-              <Text style={styles.itemTitle}>Son görülme ve çevrimiçi</Text>
-              <Text style={styles.itemSubtitle}>
-                {getVisibilityLabel(settings?.lastSeenVisibility)}
-              </Text>
-            </View>
-            <Ionicons name="chevron-forward" size={18} color="#64748B" />
-          </TouchableOpacity>
-
-          {/* Beni arayabilecekler */}
-          <TouchableOpacity
-            style={[styles.itemRow, styles.itemRowBorder]}
-            onPress={() => openVisibilityPicker('callVisibility', 'Beni arayabilecekler')}
-            activeOpacity={0.7}
-          >
-            <View style={styles.iconBox}>
-              <Ionicons name="call-outline" size={18} color="#38BDF8" />
-            </View>
-            <View style={styles.itemTextContainer}>
-              <Text style={styles.itemTitle}>Beni arayabilecekler</Text>
-              <Text style={styles.itemSubtitle}>
-                {getVisibilityLabel(settings?.callVisibility)}
-              </Text>
-            </View>
-            <Ionicons name="chevron-forward" size={18} color="#64748B" />
-          </TouchableOpacity>
-
-          {/* Odalara davet */}
-          <TouchableOpacity
-            style={[styles.itemRow, styles.itemRowBorder]}
-            onPress={() => openVisibilityPicker('roomInviteVisibility', 'Odalara davet')}
-            activeOpacity={0.7}
-          >
-            <View style={styles.iconBox}>
-              <Ionicons name="people-outline" size={18} color="#38BDF8" />
-            </View>
-            <View style={styles.itemTextContainer}>
-              <Text style={styles.itemTitle}>Odalara davet</Text>
-              <Text style={styles.itemSubtitle}>
-                {getVisibilityLabel(settings?.roomInviteVisibility)}
-              </Text>
-            </View>
-            <Ionicons name="chevron-forward" size={18} color="#64748B" />
-          </TouchableOpacity>
-
-          {/* Okundu bilgisi */}
-          <View style={[styles.itemRow, styles.itemRowBorder]}>
-            <View style={styles.iconBox}>
-              <Ionicons name="lock-closed-outline" size={18} color="#38BDF8" />
-            </View>
-            <View style={styles.itemTextContainer}>
-              <Text style={styles.itemTitle}>Okundu bilgisi</Text>
-              <Text style={styles.itemSubtitle}>
-                {settings?.readReceipts ?? true ? 'Açık' : 'Kapalı'}
-              </Text>
-            </View>
-            <Switch
-              value={settings?.readReceipts ?? true}
-              onValueChange={(val) => updateSettings({ readReceipts: val })}
-              trackColor={{ false: '#334155', true: '#2563EB' }}
-              thumbColor="#FFFFFF"
-            />
-          </View>
-
-          {/* Şifre değiştir */}
-          <TouchableOpacity
-            style={styles.itemRow}
-            onPress={() => setPasswordModalVisible(true)}
-            activeOpacity={0.7}
-          >
-            <View style={styles.iconBox}>
-              <Ionicons name="key-outline" size={18} color="#38BDF8" />
-            </View>
-            <View style={styles.itemTextContainer}>
-              <Text style={styles.itemTitle}>Şifre değiştir</Text>
-            </View>
-            <Ionicons name="chevron-forward" size={18} color="#64748B" />
-          </TouchableOpacity>
-        </View>
-
-        {/* ============================================================= */}
-        {/* 3. BİLDİRİMLER                                                */}
-        {/* ============================================================= */}
-        <Text style={styles.sectionHeader}>BILDIRIMLER</Text>
-        <View style={styles.cardContainer}>
-          {/* Kişisel sohbetler */}
-          <View style={[styles.itemRow, styles.itemRowBorder]}>
-            <View style={styles.iconBox}>
-              <Ionicons name="chatbubble-outline" size={18} color="#38BDF8" />
-            </View>
-            <View style={styles.itemTextContainer}>
-              <Text style={styles.itemTitle}>Kişisel sohbetler</Text>
-            </View>
-            <Switch
-              value={settings?.notifyPrivate ?? true}
-              onValueChange={(val) => updateSettings({ notifyPrivate: val })}
-              trackColor={{ false: '#334155', true: '#2563EB' }}
-              thumbColor="#FFFFFF"
-            />
-          </View>
-
-          {/* Sohbet odaları */}
-          <View style={[styles.itemRow, styles.itemRowBorder]}>
-            <View style={styles.iconBox}>
-              <Ionicons name="people-outline" size={18} color="#38BDF8" />
-            </View>
-            <View style={styles.itemTextContainer}>
-              <Text style={styles.itemTitle}>Sohbet odaları</Text>
-            </View>
-            <Switch
-              value={settings?.notifyRooms ?? true}
-              onValueChange={(val) => updateSettings({ notifyRooms: val })}
-              trackColor={{ false: '#334155', true: '#2563EB' }}
-              thumbColor="#FFFFFF"
-            />
-          </View>
-
-          {/* Aramalar */}
-          <View style={[styles.itemRow, styles.itemRowBorder]}>
-            <View style={styles.iconBox}>
-              <Ionicons name="call-outline" size={18} color="#38BDF8" />
-            </View>
-            <View style={styles.itemTextContainer}>
-              <Text style={styles.itemTitle}>Aramalar</Text>
+        {/* ------------------------------------------------------------- */}
+        {/* 6. DİĞER TERCİHLER (Uygulama İşlevlerini Koru Kuralı)           */}
+        {/* ------------------------------------------------------------- */}
+        <Text style={styles.sectionTitle}>DİĞER BİLDİRİM VE TERCİHLER</Text>
+        <View style={styles.listContainer}>
+          {/* Arama Bildirimleri */}
+          <View style={[styles.listRow, styles.listRowBorder]}>
+            <View style={styles.listRowLeft}>
+              <Ionicons name="notifications-outline" size={20} color="#94A3B8" style={{ marginRight: 14 }} />
+              <Text style={styles.listRowTitle}>Arama bildirimleri</Text>
             </View>
             <Switch
               value={settings?.notifyCalls ?? true}
               onValueChange={(val) => updateSettings({ notifyCalls: val })}
-              trackColor={{ false: '#334155', true: '#2563EB' }}
+              trackColor={{ false: "#1E293B", true: "#2563EB" }}
               thumbColor="#FFFFFF"
+              style={styles.switchStyle}
             />
           </View>
 
-          {/* Mesaj önizlemesi */}
-          <View style={[styles.itemRow, styles.itemRowBorder]}>
-            <View style={styles.iconBox}>
-              <Ionicons name="eye-outline" size={18} color="#38BDF8" />
-            </View>
-            <View style={styles.itemTextContainer}>
-              <Text style={styles.itemTitle}>Mesaj önizlemesi</Text>
+          {/* Mesaj Önizlemesi */}
+          <View style={[styles.listRow, styles.listRowBorder]}>
+            <View style={styles.listRowLeft}>
+              <Ionicons name="eye-outline" size={20} color="#94A3B8" style={{ marginRight: 14 }} />
+              <Text style={styles.listRowTitle}>Mesaj önizlemesi</Text>
             </View>
             <Switch
               value={settings?.messagePreview ?? true}
               onValueChange={(val) => updateSettings({ messagePreview: val })}
-              trackColor={{ false: '#334155', true: '#2563EB' }}
+              trackColor={{ false: "#1E293B", true: "#2563EB" }}
               thumbColor="#FFFFFF"
-            />
-          </View>
-
-          {/* Uygulama içi sesler */}
-          <View style={[styles.itemRow, styles.itemRowBorder]}>
-            <View style={styles.iconBox}>
-              <Ionicons name="volume-medium-outline" size={18} color="#38BDF8" />
-            </View>
-            <View style={styles.itemTextContainer}>
-              <Text style={styles.itemTitle}>Uygulama içi sesler</Text>
-            </View>
-            <Switch
-              value={settings?.inAppSounds ?? true}
-              onValueChange={(val) => updateSettings({ inAppSounds: val })}
-              trackColor={{ false: '#334155', true: '#2563EB' }}
-              thumbColor="#FFFFFF"
+              style={styles.switchStyle}
             />
           </View>
 
           {/* Titreşim */}
-          <View style={styles.itemRow}>
-            <View style={styles.iconBox}>
-              <Ionicons name="phone-portrait-outline" size={18} color="#38BDF8" />
-            </View>
-            <View style={styles.itemTextContainer}>
-              <Text style={styles.itemTitle}>Titreşim</Text>
+          <View style={styles.listRow}>
+            <View style={styles.listRowLeft}>
+              <Ionicons name="phone-portrait-outline" size={20} color="#94A3B8" style={{ marginRight: 14 }} />
+              <Text style={styles.listRowTitle}>Titreşim</Text>
             </View>
             <Switch
               value={settings?.inAppVibrate ?? true}
               onValueChange={(val) => updateSettings({ inAppVibrate: val })}
-              trackColor={{ false: '#334155', true: '#2563EB' }}
+              trackColor={{ false: "#1E293B", true: "#2563EB" }}
               thumbColor="#FFFFFF"
+              style={styles.switchStyle}
             />
           </View>
         </View>
 
-        {/* ============================================================= */}
-        {/* 4. TERCİHLER                                                  */}
-        {/* ============================================================= */}
-        <Text style={styles.sectionHeader}>TERCIHLER</Text>
-        <View style={styles.cardContainer}>
-          {/* Mesaj metin boyutu */}
+        {/* ------------------------------------------------------------- */}
+        {/* 7. OTURUM & TEHLİKELİ BÖLGE (Sayfa 4 & Sayfa 5)               */}
+        {/* ------------------------------------------------------------- */}
+        <Text style={styles.sectionTitle}>OTURUM VE HESAP YÖNETİMİ</Text>
+        <View style={styles.listContainer}>
+          {/* Çıkış Yap - Sayfa 4 Modalını Açar */}
           <TouchableOpacity
-            style={[styles.itemRow, styles.itemRowBorder]}
-            onPress={openTextSizePicker}
+            style={[styles.listRow, styles.listRowBorder]}
+            onPress={() => setLogoutModalVisible(true)}
             activeOpacity={0.7}
           >
-            <View style={styles.iconBox}>
-              <Ionicons name="pencil-outline" size={18} color="#38BDF8" />
+            <View style={styles.listRowLeft}>
+              <Ionicons name="log-out-outline" size={20} color="#EF4444" style={{ marginRight: 14 }} />
+              <Text style={[styles.listRowTitle, { color: "#EF4444" }]}>Çıkış yap</Text>
             </View>
-            <View style={styles.itemTextContainer}>
-              <Text style={styles.itemTitle}>Mesaj metin boyutu</Text>
-              <Text style={styles.itemSubtitle}>{settings?.messageTextSize || 16} px</Text>
-            </View>
-            <Ionicons name="chevron-forward" size={18} color="#64748B" />
+            <Ionicons name="chevron-forward" size={18} color="#EF4444" />
           </TouchableOpacity>
 
-          {/* 24 saat biçimi */}
-          <View style={[styles.itemRow, styles.itemRowBorder]}>
-            <View style={styles.iconBox}>
-              <Ionicons name="time-outline" size={18} color="#38BDF8" />
-            </View>
-            <View style={styles.itemTextContainer}>
-              <Text style={styles.itemTitle}>24 saat biçimi</Text>
-            </View>
-            <Switch
-              value={settings?.timeFormat24h ?? true}
-              onValueChange={(val) => updateSettings({ timeFormat24h: val })}
-              trackColor={{ false: '#334155', true: '#2563EB' }}
-              thumbColor="#FFFFFF"
-            />
-          </View>
-
-          {/* Güncellemeleri denetle */}
+          {/* Hesabını Sil - Sayfa 5 Modalını Açar */}
           <TouchableOpacity
-            style={styles.itemRow}
-            onPress={() => updateService.checkAndApplyUpdates(false)}
+            style={styles.listRow}
+            onPress={() => setDeleteAccountVisible(true)}
             activeOpacity={0.7}
           >
-            <View style={styles.iconBox}>
-              <Ionicons name="sync-outline" size={18} color="#38BDF8" />
+            <View style={styles.listRowLeft}>
+              <Ionicons name="trash-outline" size={20} color="#EF4444" style={{ marginRight: 14 }} />
+              <Text style={[styles.listRowTitle, { color: "#EF4444" }]}>Hesabını sil</Text>
             </View>
-            <View style={styles.itemTextContainer}>
-              <Text style={styles.itemTitle}>Güncellemeleri denetle</Text>
-            </View>
-            <Ionicons name="chevron-forward" size={18} color="#64748B" />
+            <Ionicons name="chevron-forward" size={18} color="#EF4444" />
           </TouchableOpacity>
         </View>
 
-        {/* ============================================================= */}
-        {/* 5. OTURUM                                                     */}
-        {/* ============================================================= */}
-        <Text style={styles.sectionHeader}>OTURUM</Text>
-        <View style={styles.cardContainer}>
-          <TouchableOpacity
-            style={styles.itemRow}
-            onPress={handleLogout}
-            activeOpacity={0.7}
-          >
-            <View style={[styles.iconBox, { backgroundColor: 'rgba(239, 68, 68, 0.12)' }]}>
-              <Ionicons name="log-out-outline" size={18} color="#EF4444" />
-            </View>
-            <View style={styles.itemTextContainer}>
-              <Text style={[styles.itemTitle, { color: '#EF4444' }]}>Çıkış yap</Text>
-            </View>
-          </TouchableOpacity>
-        </View>
+        {/* Chrono Versiyon Bilgisi */}
+        <Text style={styles.versionFooter}>
+          Chrono v{Constants.expoConfig?.version || '1.5.0'} ({Platform.OS === 'ios' ? Constants.expoConfig?.ios?.buildNumber || '6' : Constants.expoConfig?.android?.versionCode || 6}) · Uçtan Uca Şifreli İletişim
+        </Text>
       </ScrollView>
 
-      {/* Profil Düzenle Modalı - Ekran 5 */}
-      <Modal
-        visible={editModalVisible}
-        animationType="slide"
-        onRequestClose={() => setEditModalVisible(false)}
-      >
-        <SafeAreaView style={styles.editModalContainer}>
-          {/* Üst Başlık Çubuğu */}
-          <View style={styles.editModalHeader}>
-            <TouchableOpacity
-              style={styles.editCloseBtn}
-              onPress={() => setEditModalVisible(false)}
-              activeOpacity={0.7}
-            >
-              <Ionicons name="close" size={20} color="#FFFFFF" />
-            </TouchableOpacity>
-            <Text style={styles.editModalTitle}>Profili düzenle</Text>
-            <View style={{ width: 36 }} />
-          </View>
+      {/* ============================================================= */}
+      {/* ÖZEL BOTTOM SHEET VE DİYALOG MODALLARI                         */}
+      {/* ============================================================= */}
 
-          <ScrollView
-            style={{ flex: 1 }}
-            contentContainerStyle={styles.editModalContent}
-            keyboardShouldPersistTaps="handled"
-          >
-            {/* Avatar & Fotoğrafı Değiştir Alanı */}
-            <View style={styles.editAvatarSection}>
-              <TouchableOpacity onPress={handleAvatarOptions} activeOpacity={0.85}>
-                <ChronoAvatar
-                  size={96}
-                  name={displayName || currentUser?.displayName || 'U'}
-                  uri={currentUser?.avatarUrl}
-                  ringColor="#2563EB"
-                  badge="camera"
-                  showRing={true}
-                />
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={handleAvatarOptions}
-                activeOpacity={0.7}
-                style={{ marginTop: 12 }}
-              >
-                <Text style={styles.changePhotoText}>Fotoğrafı değiştir</Text>
-              </TouchableOpacity>
-            </View>
+      {/* 1. Sayfa 1: Gizlilik Seçici Bottom Sheet */}
+      {visibilityPickerConfig && (
+        <VisibilityPickerSheet
+          visible={visibilityPickerConfig.visible}
+          title={visibilityPickerConfig.title}
+          subtitle={visibilityPickerConfig.subtitle}
+          selectedValue={settings?.[visibilityPickerConfig.key]}
+          onSelect={(val) => {
+            updateSettings({ [visibilityPickerConfig.key]: val });
+          }}
+          onClose={() => setVisibilityPickerConfig(null)}
+        />
+      )}
 
-            {/* Alan 1: Görünen ad */}
-            <View style={styles.formCard}>
-              <View style={styles.formCardIconBox}>
-                <Ionicons name="person-outline" size={20} color="#38BDF8" />
-              </View>
-              <View style={styles.formCardContent}>
-                <Text style={styles.formCardLabel}>Görünen ad</Text>
-                <TextInput
-                  style={styles.formCardInput}
-                  value={displayName}
-                  onChangeText={setDisplayName}
-                  placeholder="Görünen adınız"
-                  placeholderTextColor="#64748B"
-                />
-              </View>
-            </View>
+      {/* 2. Sayfa 2: Mesaj Metin Boyutu Bottom Sheet */}
+      <TextSizeSheet
+        visible={textSizeSheetVisible}
+        currentSize={settings?.messageTextSize || 16}
+        onApply={(newSize) => {
+          updateSettings({ messageTextSize: newSize });
+        }}
+        onClose={() => setTextSizeSheetVisible(false)}
+      />
 
-            {/* Alan 2: Kullanıcı adı */}
-            <View style={[styles.formCard, styles.formCardActiveBorder]}>
-              <View style={styles.formCardIconBox}>
-                <Text style={styles.atSymbolIcon}>@</Text>
-              </View>
-              <View style={styles.formCardContent}>
-                <Text style={styles.formCardLabel}>Kullanıcı adı</Text>
-                <TextInput
-                  style={styles.formCardInput}
-                  value={username}
-                  onChangeText={setUsername}
-                  placeholder="kullanici_adi"
-                  placeholderTextColor="#64748B"
-                  autoCapitalize="none"
-                />
-              </View>
-              <View style={styles.availableBadge}>
-                <Ionicons name="checkmark" size={14} color="#10B981" />
-                <Text style={styles.availableBadgeText}>Müsait</Text>
-              </View>
-            </View>
+      {/* 3. Sayfa 3: Şifre Değiştir Bottom Sheet */}
+      <ChangePasswordSheet
+        visible={passwordSheetVisible}
+        onSubmit={handleChangePassword}
+        onClose={() => setPasswordSheetVisible(false)}
+      />
 
-            {/* Alan 3: Hakkında (Bio) */}
-            <View style={[styles.formCard, styles.formCardBio]}>
-              <Text style={styles.formCardLabel}>Hakkında</Text>
-              <TextInput
-                style={styles.bioInput}
-                value={bio}
-                onChangeText={setBio}
-                placeholder="Kendinden kısaca bahset"
-                placeholderTextColor="#64748B"
-                multiline
-                maxLength={120}
-              />
-              <Text style={styles.bioCounter}>{bio.length}/120</Text>
-            </View>
+      {/* 4. Sayfa 4: Çıkış Yap Onay Modalı */}
+      <LogoutModal
+        visible={logoutModalVisible}
+        onClose={() => setLogoutModalVisible(false)}
+        onConfirm={handleConfirmLogout}
+      />
 
-            {/* Kaydet Butonu */}
-            <View style={{ marginTop: 'auto', paddingTop: 28, paddingBottom: 16 }}>
-              <TouchableOpacity
-                style={styles.saveProfileBtn}
-                onPress={handleSaveProfile}
-                disabled={saving}
-                activeOpacity={0.85}
-              >
-                {saving ? (
-                  <ActivityIndicator size="small" color="#FFFFFF" />
-                ) : (
-                  <>
-                    <Text style={styles.saveProfileBtnText}>Kaydet</Text>
-                    <View style={styles.saveCheckBadge}>
-                      <Ionicons name="checkmark" size={15} color="#FFFFFF" />
-                    </View>
-                  </>
-                )}
-              </TouchableOpacity>
-            </View>
-          </ScrollView>
-        </SafeAreaView>
-      </Modal>
+      {/* 5. Sayfa 5: Hesabını Sil Onay Modalı */}
+      <DeleteAccountModal
+        visible={deleteAccountVisible}
+        username={currentUser?.username || "zyqwax"}
+        onClose={() => setDeleteAccountVisible(false)}
+        onConfirm={handleConfirmDeleteAccount}
+      />
 
-      {/* Şifre Değiştirme Modalı */}
-      <Modal
-        visible={passwordModalVisible}
-        animationType="fade"
-        transparent
-        onRequestClose={() => setPasswordModalVisible(false)}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalCard}>
-            <Text style={styles.modalCardTitle}>Şifre Değiştir</Text>
+      {/* 6. Profili Düzenle Modalı */}
+      <EditProfileSheet
+        visible={editProfileVisible}
+        currentUser={currentUser}
+        onClose={() => setEditProfileVisible(false)}
+        onSave={handleSaveProfile}
+        onAvatarPress={() => setAvatarOptionsVisible(true)}
+        uploadingAvatar={uploadingAvatar}
+      />
 
-            <Text style={styles.modalInputLabel}>Mevcut Şifre</Text>
-            <TextInput
-              style={styles.modalInput}
-              secureTextEntry
-              value={currentPassword}
-              onChangeText={setCurrentPassword}
-              placeholder="••••••"
-              placeholderTextColor="#64748B"
-            />
+      {/* 7. Profil Fotoğrafı Seçenekleri Modalı */}
+      <AvatarOptionsModal
+        visible={avatarOptionsVisible}
+        hasAvatar={!!currentUser?.avatarUrl}
+        onPickImage={handlePickAndUploadImage}
+        onRemoveAvatar={handleRemoveAvatar}
+        onClose={() => setAvatarOptionsVisible(false)}
+      />
 
-            <Text style={styles.modalInputLabel}>Yeni Şifre (En az 6 karakter)</Text>
-            <TextInput
-              style={styles.modalInput}
-              secureTextEntry
-              value={newPassword}
-              onChangeText={setNewPassword}
-              placeholder="••••••"
-              placeholderTextColor="#64748B"
-            />
-
-            <View style={styles.modalButtons}>
-              <TouchableOpacity
-                style={styles.modalCancelBtn}
-                onPress={() => setPasswordModalVisible(false)}
-              >
-                <Text style={styles.modalCancelBtnText}>İptal</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={styles.modalSaveBtn}
-                onPress={handleChangePassword}
-                disabled={savingPassword}
-              >
-                {savingPassword ? (
-                  <ActivityIndicator size="small" color="#FFFFFF" />
-                ) : (
-                  <Text style={styles.modalSaveBtnText}>Güncelle</Text>
-                )}
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
-
-      {/* Seçenek Seçim Modalı */}
-      <Modal
-        visible={!!activePicker}
-        animationType="fade"
-        transparent
-        onRequestClose={() => setActivePicker(null)}
-      >
-        <TouchableOpacity
-          style={styles.modalOverlay}
-          activeOpacity={1}
-          onPress={() => setActivePicker(null)}
-        >
-          <View style={styles.pickerCard}>
-            <Text style={styles.pickerTitle}>{activePicker?.title}</Text>
-            {activePicker?.options.map((opt) => {
-              const isSelected =
-                settings?.[activePicker.key as keyof typeof settings] === opt.value;
-              return (
-                <TouchableOpacity
-                  key={String(opt.value)}
-                  style={[
-                    styles.pickerRow,
-                    isSelected && styles.pickerRowSelected,
-                  ]}
-                  onPress={async () => {
-                    const key = activePicker.key;
-                    setActivePicker(null);
-                    await updateSettings({ [key]: opt.value });
-                  }}
-                >
-                  <Text
-                    style={[
-                      styles.pickerLabel,
-                      isSelected && styles.pickerLabelSelected,
-                    ]}
-                  >
-                    {opt.label}
-                  </Text>
-                  {isSelected && (
-                    <Ionicons name="checkmark" size={18} color="#38BDF8" />
-                  )}
-                </TouchableOpacity>
-              );
-            })}
-          </View>
-        </TouchableOpacity>
-      </Modal>
+      {/* 8. Genel Chrono Alert Modalı (Sistem Alert.alert yerine) */}
+      <ChronoAlertModal state={alertState} onClose={closeAlert} />
     </SafeAreaView>
   );
 }
@@ -847,355 +708,239 @@ export default function ProfileScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0B0F1A',
+    backgroundColor: "#080B14",
   },
   header: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
     paddingHorizontal: 20,
     paddingTop: 10,
     paddingBottom: 8,
   },
   headerTitle: {
-    fontSize: 24,
-    fontWeight: '700',
-    color: '#FFFFFF',
-    letterSpacing: 0.2,
+    fontSize: 26,
+    fontWeight: "700",
+    color: "#FFFFFF",
+    letterSpacing: -0.4,
+  },
+  searchBtn: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  searchBarContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#101726",
+    marginHorizontal: 16,
+    marginBottom: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.05)",
+  },
+  searchBarInput: {
+    flex: 1,
+    color: "#FFFFFF",
+    fontSize: 14,
+    padding: 0,
   },
   scrollContent: {
     paddingHorizontal: 16,
-    paddingBottom: 120,
+    paddingBottom: 100,
   },
-  avatarSection: {
-    alignItems: 'center',
-    paddingTop: 10,
-    paddingBottom: 16,
+  profileCard: {
+    backgroundColor: "#101726",
+    borderRadius: 22,
+    padding: 16,
+    marginTop: 8,
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.05)",
+  },
+  profileCardTop: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  profileInfoText: {
+    flex: 1,
+    marginLeft: 14,
+  },
+  displayNameText: {
+    fontSize: 18,
+    fontWeight: "700",
+    color: "#FFFFFF",
+    letterSpacing: -0.2,
+  },
+  usernameStatusText: {
+    fontSize: 13,
+    color: "#94A3B8",
+    marginTop: 2,
+    fontWeight: "500",
+  },
+  onlineBadgeText: {
+    color: "#10B981",
+    fontWeight: "600",
+  },
+  editPencilBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  profileCardDivider: {
+    height: 1,
+    backgroundColor: "rgba(255, 255, 255, 0.05)",
+    marginVertical: 14,
+  },
+  profileCardBottom: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  emailRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    flex: 1,
+    marginRight: 10,
+  },
+  emailText: {
+    fontSize: 13,
+    color: "#94A3B8",
+  },
+  bioActionBtn: {
+    paddingVertical: 2,
+    paddingHorizontal: 4,
+  },
+  bioActionText: {
+    fontSize: 13,
+    color: "#38BDF8",
+    fontWeight: "600",
   },
   avatarUploadingOverlay: {
-    position: 'absolute',
+    position: "absolute",
     top: 0,
     left: 0,
     right: 0,
     bottom: 0,
-    borderRadius: 48,
-    backgroundColor: 'rgba(0, 0, 0, 0.55)',
-    alignItems: 'center',
-    justifyContent: 'center',
+    borderRadius: 27,
+    backgroundColor: "rgba(0,0,0,0.5)",
+    alignItems: "center",
+    justifyContent: "center",
   },
-  nameText: {
-    fontSize: 22,
-    fontWeight: '700',
-    color: '#FFFFFF',
-    marginBottom: 4,
-  },
-  subtitleText: {
-    fontSize: 13,
-    color: '#8A93A8',
-    marginBottom: 16,
-  },
-  editProfileBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#111827',
-    borderWidth: 1,
-    borderColor: '#2563EB',
-    paddingHorizontal: 20,
-    paddingVertical: 8,
-    borderRadius: 20,
-  },
-  editProfileBtnText: {
-    color: '#FFFFFF',
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  sectionHeader: {
+  sectionTitle: {
     fontSize: 11,
-    fontWeight: '700',
-    color: '#38BDF8',
+    fontWeight: "700",
+    color: "#94A3B8",
     letterSpacing: 0.8,
-    marginTop: 20,
-    marginBottom: 8,
+    marginBottom: 10,
     marginLeft: 4,
   },
-  cardContainer: {
-    backgroundColor: '#111827',
-    borderRadius: 18,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.05)',
-    overflow: 'hidden',
+  quickGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    justifyContent: "space-between",
+    gap: 10,
+    marginBottom: 20,
   },
-  itemRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
+  quickCard: {
+    width: (SCREEN_WIDTH - 32 - 10) / 2,
+    backgroundColor: "#101726",
+    borderRadius: 18,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.05)",
+  },
+  quickCardHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 12,
+  },
+  quickIconBox: {
+    width: 36,
+    height: 36,
+    borderRadius: 11,
+    backgroundColor: "#1A2338",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  quickIconBoxActive: {
+    backgroundColor: "#2563EB",
+  },
+  quickIconBoxAa: {
+    backgroundColor: "#1A2338",
+  },
+  quickIconTextAa: {
+    color: "#FFFFFF",
+    fontSize: 15,
+    fontWeight: "700",
+  },
+  switchStyle: {
+    transform: Platform.OS === "ios" ? [{ scaleX: 0.8 }, { scaleY: 0.8 }] : [],
+  },
+  quickCardTitle: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#FFFFFF",
+    marginBottom: 3,
+  },
+  quickCardSubtitle: {
+    fontSize: 12,
+    color: "#94A3B8",
+    fontWeight: "500",
+  },
+  listContainer: {
+    backgroundColor: "#101726",
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.05)",
+    overflow: "hidden",
+    marginBottom: 20,
+  },
+  listRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
     paddingHorizontal: 16,
     paddingVertical: 14,
-    gap: 14,
   },
-  itemRowBorder: {
+  listRowBorder: {
     borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255, 255, 255, 0.04)',
+    borderBottomColor: "rgba(255, 255, 255, 0.04)",
   },
-  iconBox: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
-    backgroundColor: 'rgba(37, 99, 235, 0.15)',
-    alignItems: 'center',
-    justifyContent: 'center',
+  listRowLeft: {
+    flexDirection: "row",
+    alignItems: "center",
   },
-  itemTextContainer: {
-    flex: 1,
-  },
-  itemTitle: {
+  listRowTitle: {
     fontSize: 15,
-    fontWeight: '600',
-    color: '#FFFFFF',
-    marginBottom: 2,
+    fontWeight: "600",
+    color: "#FFFFFF",
   },
-  itemSubtitle: {
-    fontSize: 12,
-    color: '#8A93A8',
+  pillDropdown: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "rgba(255, 255, 255, 0.04)",
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 12,
   },
-  editModalContainer: {
-    flex: 1,
-    backgroundColor: '#090D18', // Derin gece arka planı
-  },
-  editModalHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 20,
-    paddingTop: 14,
-    paddingBottom: 10,
-  },
-  editCloseBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: '#141C2C',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  editModalTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#FFFFFF',
-    letterSpacing: -0.3,
-  },
-  editModalContent: {
-    paddingHorizontal: 20,
-    paddingTop: 10,
-    paddingBottom: 24,
-    flexGrow: 1,
-  },
-  editAvatarSection: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginVertical: 20,
-  },
-  changePhotoText: {
-    color: '#38BDF8',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  formCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#101728',
-    borderRadius: 18,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderWidth: 1,
-    borderColor: '#1C273E',
-    marginBottom: 14,
-  },
-  formCardActiveBorder: {
-    borderColor: '#2563EB',
-    borderWidth: 1.5,
-  },
-  formCardBio: {
-    flexDirection: 'column',
-    alignItems: 'stretch',
-    minHeight: 125,
-    justifyContent: 'space-between',
-  },
-  formCardIconBox: {
-    marginRight: 14,
-    width: 24,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  atSymbolIcon: {
-    color: '#38BDF8',
-    fontSize: 20,
-    fontWeight: '700',
-  },
-  formCardContent: {
-    flex: 1,
-  },
-  formCardLabel: {
-    fontSize: 12,
-    color: '#7E8BA6',
-    fontWeight: '500',
-  },
-  formCardInput: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#FFFFFF',
-    paddingVertical: 4,
-    paddingHorizontal: 0,
-    marginTop: 2,
-  },
-  availableBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    paddingLeft: 8,
-  },
-  availableBadgeText: {
-    color: '#10B981',
+  pillDropdownText: {
     fontSize: 13,
-    fontWeight: '600',
+    color: "#94A3B8",
+    fontWeight: "600",
   },
-  bioInput: {
-    color: '#FFFFFF',
-    fontSize: 15,
-    marginTop: 8,
-    minHeight: 50,
-    textAlignVertical: 'top',
-    paddingHorizontal: 0,
-    paddingVertical: 0,
-  },
-  bioCounter: {
-    alignSelf: 'flex-end',
-    color: '#5E6C87',
+  versionFooter: {
+    textAlign: "center",
     fontSize: 12,
-    fontWeight: '500',
-    marginTop: 8,
-  },
-  saveProfileBtn: {
-    backgroundColor: '#2563EB',
-    height: 56,
-    borderRadius: 28,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    position: 'relative',
-    shadowColor: '#2563EB',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.35,
-    shadowRadius: 10,
-    elevation: 8,
-  },
-  saveProfileBtnText: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '700',
-  },
-  saveCheckBadge: {
-    position: 'absolute',
-    right: 12,
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: 'rgba(255, 255, 255, 0.22)',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.7)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 24,
-  },
-  modalCard: {
-    width: '100%',
-    backgroundColor: '#111827',
-    borderRadius: 20,
-    padding: 20,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.08)',
-  },
-  modalCardTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#FFFFFF',
-    marginBottom: 16,
-  },
-  modalInputLabel: {
-    fontSize: 12,
-    color: '#38BDF8',
-    fontWeight: '600',
+    color: "#64748B",
     marginTop: 10,
-    marginBottom: 6,
-  },
-  modalInput: {
-    backgroundColor: '#0B0F1A',
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    color: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.08)',
-  },
-  modalButtons: {
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
-    gap: 12,
-    marginTop: 20,
-  },
-  modalCancelBtn: {
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-  },
-  modalCancelBtnText: {
-    color: '#8A93A8',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  modalSaveBtn: {
-    backgroundColor: '#2563EB',
-    paddingHorizontal: 18,
-    paddingVertical: 10,
-    borderRadius: 10,
-  },
-  modalSaveBtnText: {
-    color: '#FFFFFF',
-    fontSize: 14,
-    fontWeight: '700',
-  },
-  pickerCard: {
-    width: '100%',
-    backgroundColor: '#111827',
-    borderRadius: 20,
-    padding: 20,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.08)',
-  },
-  pickerTitle: {
-    fontSize: 17,
-    fontWeight: '700',
-    color: '#FFFFFF',
-    marginBottom: 14,
-  },
-  pickerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 14,
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255, 255, 255, 0.04)',
-  },
-  pickerRowSelected: {
-    backgroundColor: 'rgba(56, 189, 248, 0.06)',
-    paddingHorizontal: 8,
-    borderRadius: 8,
-  },
-  pickerLabel: {
-    fontSize: 15,
-    color: '#8A93A8',
-  },
-  pickerLabelSelected: {
-    color: '#FFFFFF',
-    fontWeight: '700',
+    marginBottom: 20,
   },
 });

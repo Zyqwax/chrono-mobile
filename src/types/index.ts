@@ -16,6 +16,7 @@ export interface User {
   birthday?: string | null;
   status?: UserStatus;
   pushToken?: string | null;
+  publicKey?: string | null;
   lastSeenAt?: string | null;
   createdAt?: string;
 }
@@ -59,12 +60,16 @@ export interface RoomMember {
 export interface MessageReply {
   id: string;
   content: string;
+  ciphertext?: string | null;
+  nonce?: string | null;
+  senderPublicKey?: string | null;
   type: 'TEXT' | 'IMAGE' | 'SYSTEM' | 'CALL';
   deletedAt?: string | null;
   sender: {
     id: string;
     displayName: string;
     username: string;
+    publicKey?: string | null;
   };
 }
 
@@ -73,6 +78,9 @@ export interface Message {
   roomId: string;
   senderId: string;
   content: string;
+  ciphertext?: string | null;
+  nonce?: string | null;
+  senderPublicKey?: string | null;
   type?: 'TEXT' | 'IMAGE' | 'SYSTEM' | 'CALL';
   replyToId?: string | null;
   replyTo?: MessageReply | null;

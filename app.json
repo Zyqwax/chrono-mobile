@@ -3,7 +3,7 @@
     "name": "Chrono",
     "slug": "chrono",
     "scheme": "chrono",
-    "version": "1.4.0",
+    "version": "1.5.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
@@ -15,20 +15,17 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.zyqwax.chrono",
-      "buildNumber": "5",
+      "buildNumber": "6",
       "infoPlist": {
         "NSMicrophoneUsageDescription": "Chrono, sesli ve görüntülü görüşmeler için mikrofonunuza erişim gerektirir.",
         "NSCameraUsageDescription": "Chrono, görüntülü görüşmeler için kameranıza erişim gerektirir.",
-        "UIBackgroundModes": [
-          "audio",
-          "voip"
-        ]
+        "UIBackgroundModes": ["audio", "voip"]
       }
     },
     "android": {
       "package": "com.zyqwax.chrono",
       "googleServicesFile": "./google-services.json",
-      "versionCode": 5,
+      "versionCode": 6,
       "adaptiveIcon": {
         "backgroundColor": "#0B0F1A",
         "foregroundImage": "./assets/android-icon-foreground.png",
@@ -36,7 +33,6 @@
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
       "predictiveBackGestureEnabled": false,
-      "softwareKeyboardLayoutMode": "pan",
       "permissions": [
         "FOREGROUND_SERVICE",
         "FOREGROUND_SERVICE_MICROPHONE",
@@ -79,9 +75,7 @@
       [
         "@config-plugins/react-native-callkeep",
         {
-          "additionalPermissions": [
-            "RECORD_AUDIO"
-          ]
+          "additionalPermissions": ["RECORD_AUDIO"]
         }
       ],
       [
@@ -89,19 +83,14 @@
         {
           "icon": "./assets/notification-icon.png",
           "color": "#38BDF8",
-          "sounds": [
-            "./assets/sounds/ringtone.wav"
-          ]
+          "sounds": ["./assets/sounds/ringtone.wav"]
         }
       ],
       [
         "./plugins/withNotifee.js",
         {
           "android": {
-            "foregroundServiceTypes": [
-              "microphone",
-              "phoneCall"
-            ]
+            "foregroundServiceTypes": ["microphone", "phoneCall"]
           }
         }
       ],

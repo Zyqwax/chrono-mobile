@@ -20,6 +20,55 @@ import { liveKitService } from '../services/livekit';
 import { localDb } from '../services/localDb';
 import { requestCallPermissions } from '../services/permissions';
 import { callKeepService } from '../services/callkeep';
+import { cryptoService } from '../services/cryptoService';
+import { subscribeSessionExpired } from '../services/api';
+
+function getRoomPeerPublicKey(room: Room | null | undefined, currentUserId?: string): string | null {
+  if (!room) return null;
+  if (room.peer?.publicKey) return room.peer.publicKey;
+  if (room.members && room.members.length > 0) {
+    const peerMember = room.members.find((m) => m.userId !== currentUserId);
+    if (peerMember?.user?.publicKey) return peerMember.user.publicKey;
+  }
+  return null;
+}
+
+async function decryptMessageIfNeeded(
+  message: Message,
+  currentUserId?: string,
+  peerPublicKey?: string | null,
+): Promise<Message> {
+  if (!message.ciphertext || !message.nonce) {
+    return message;
+  }
+
+  const targetKey =
+    message.senderId === currentUserId
+      ? peerPublicKey
+      : message.senderPublicKey || message.sender?.publicKey || peerPublicKey;
+
+  if (!targetKey) {
+    return message;
+  }
+
+  try {
+    const decrypted = await cryptoService.decryptMessage(
+      message.ciphertext,
+      message.nonce,
+      targetKey,
+    );
+    if (decrypted !== null) {
+      return {
+        ...message,
+        content: decrypted,
+      };
+    }
+  } catch (err) {
+    console.warn('[decryptMessageIfNeeded] Mesaj çözme hatası:', err);
+  }
+
+  return message;
+}
 
 const STORAGE_TOKEN_KEY = '@chrono_auth_token';
 const STORAGE_USER_KEY = '@chrono_auth_user';
@@ -172,6 +221,20 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         }
       }
 
+      // 3. Kriptografi anahtarlarını yükle
+      await cryptoService.loadKeys().catch(console.warn);
+
+      // 4. Tek cihaz oturumu düşme olayını dinle (401 veya WebSocket session_expired)
+      subscribeSessionExpired((reason) => {
+        console.warn('[SessionExpired] Oturum kapatılıyor:', reason);
+        get().logout();
+        Alert.alert(
+          'Oturum Sonlandırıldı',
+          reason || 'Hesabınız başka bir cihazda açıldığı için bu cihazdaki oturum sonlandırıldı.',
+          [{ text: 'Tamam' }],
+        );
+      });
+
       if (token && userStr) {
         const user = JSON.parse(userStr) as User;
         get().setAuth(user, token);
@@ -256,19 +319,39 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       const socket = connectSocket(token);
 
       // 1. Yeni mesaj geldiğinde
-      socket.on('new_message', (message: Message) => {
+      socket.on('new_message', async (rawMessage: Message) => {
+        const { currentUser, rooms, activeRoom } = get();
+        const room =
+          rooms.find((r) => r.id === rawMessage.roomId) ||
+          (activeRoom?.id === rawMessage.roomId ? activeRoom : null);
+        const peerPubKey = getRoomPeerPublicKey(room, currentUser?.id);
+        const message = await decryptMessageIfNeeded(rawMessage, currentUser?.id, peerPubKey);
+
         // Eğer bu mesaj bizim az önce gönderdiğimiz geçici (isPending) mesajsa temizle
         set((state) => {
           const rMsgs = state.roomMessages[message.roomId] || [];
           const hasMatchingTemp = rMsgs.some(
-            (m) => m.isPending && m.content === message.content && m.senderId === message.senderId,
+            (m) =>
+              m.isPending &&
+              (m.content === message.content || (rawMessage.content && m.content === rawMessage.content)) &&
+              m.senderId === message.senderId,
           );
           if (hasMatchingTemp) {
             const nextRMsgs = rMsgs.filter(
-              (m) => !(m.isPending && m.content === message.content && m.senderId === message.senderId),
+              (m) =>
+                !(
+                  m.isPending &&
+                  (m.content === message.content || (rawMessage.content && m.content === rawMessage.content)) &&
+                  m.senderId === message.senderId
+                ),
             );
             const nextActive = state.messages.filter(
-              (m) => !(m.isPending && m.content === message.content && m.senderId === message.senderId),
+              (m) =>
+                !(
+                  m.isPending &&
+                  (m.content === message.content || (rawMessage.content && m.content === rawMessage.content)) &&
+                  m.senderId === message.senderId
+                ),
             );
             return {
               roomMessages: { ...state.roomMessages, [message.roomId]: nextRMsgs },
@@ -278,8 +361,8 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           return state;
         });
 
-        const { activeRoom, addMessage, rooms } = get();
-        // Odaya ait mesaj havuzuna her durumda ekle
+        const { addMessage } = get();
+        // Odaya ait mesaj havuzuna çözülmüş mesajı ekle
         addMessage(message);
 
         if (activeRoom && message.roomId === activeRoom.id) {
@@ -620,6 +703,8 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     api.put('/users/me/push-token', { pushToken: null }).catch(() => {});
     disconnectSocket();
     setAuthToken(null);
+    void cryptoService.clearKeys();
+    void localDb.purgeAllData();
     AsyncStorage.removeItem(STORAGE_TOKEN_KEY).catch(console.error);
     AsyncStorage.removeItem(STORAGE_USER_KEY).catch(console.error);
     AsyncStorage.removeItem(STORAGE_ROOMS_KEY).catch(console.error);
@@ -1145,7 +1230,17 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         const res = await api.get(`/messages/room/${roomId}`, {
           params: { limit: 40, before },
         });
-        const serverOlder: Message[] = res.data || [];
+        const serverOlderRaw: Message[] = res.data || [];
+        const room =
+          get().rooms.find((r) => r.id === roomId) ||
+          (get().activeRoom?.id === roomId ? get().activeRoom : null);
+        const peerPubKey = getRoomPeerPublicKey(room, get().currentUser?.id);
+        const serverOlder = await Promise.all(
+          serverOlderRaw.map((m) =>
+            decryptMessageIfNeeded(m, get().currentUser?.id, peerPubKey),
+          ),
+        );
+
         if (serverOlder.length > 0) {
           void localDb.saveMessages(serverOlder);
         }
@@ -1172,13 +1267,20 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       const localMsgs = await localDb.getMessages(roomId, 40);
       if (localMsgs.length > 0) {
         set((state) => {
+          const currentInMemory = state.roomMessages[roomId] || [];
+          const localIds = new Set(localMsgs.map((m) => m.id));
+          // Bellekte olup henüz db'ye yazılmamış (örn. pending) mesajları koru
+          const pendingOrUncached = currentInMemory.filter((m) => !localIds.has(m.id) && m.isPending);
+          const initialMerged = [...pendingOrUncached, ...localMsgs].sort(
+            (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+          );
           const shouldUpdateActive = !state.activeRoom || state.activeRoom.id === roomId;
           return {
             roomMessages: {
               ...state.roomMessages,
-              [roomId]: localMsgs,
+              [roomId]: initialMerged,
             },
-            ...(shouldUpdateActive ? { messages: localMsgs } : {}),
+            ...(shouldUpdateActive ? { messages: initialMerged } : {}),
           };
         });
 
@@ -1187,8 +1289,18 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           const res = await api.get(`/messages/room/${roomId}`, {
             params: { limit: 40, after: newest.createdAt },
           });
-          const newDelta: Message[] = res.data || [];
-          if (newDelta.length > 0) {
+          const newDeltaRaw: Message[] = res.data || [];
+          if (newDeltaRaw.length > 0) {
+            const room =
+              get().rooms.find((r) => r.id === roomId) ||
+              (get().activeRoom?.id === roomId ? get().activeRoom : null);
+            const peerPubKey = getRoomPeerPublicKey(room, get().currentUser?.id);
+            const newDelta = await Promise.all(
+              newDeltaRaw.map((m) =>
+                decryptMessageIfNeeded(m, get().currentUser?.id, peerPubKey),
+              ),
+            );
+
             void localDb.saveMessages(newDelta);
             set((state) => {
               const current = state.roomMessages[roomId] || localMsgs;
@@ -1214,7 +1326,17 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       const res = await api.get(`/messages/room/${roomId}`, {
         params: { limit: 40 },
       });
-      const newMessages: Message[] = res.data || [];
+      const newMessagesRaw: Message[] = res.data || [];
+      const room =
+        get().rooms.find((r) => r.id === roomId) ||
+        (get().activeRoom?.id === roomId ? get().activeRoom : null);
+      const peerPubKey = getRoomPeerPublicKey(room, get().currentUser?.id);
+      const newMessages = await Promise.all(
+        newMessagesRaw.map((m) =>
+          decryptMessageIfNeeded(m, get().currentUser?.id, peerPubKey),
+        ),
+      );
+
       if (newMessages.length > 0) {
         void localDb.saveMessages(newMessages);
       }
@@ -1262,20 +1384,42 @@ export const useChatStore = create<ChatStore>((set, get) => ({
 
     get().addMessage(optimisticMessage);
 
+    const room = get().rooms.find((r) => r.id === roomId) || get().activeRoom;
+    const peerPubKey = getRoomPeerPublicKey(room, currentUser?.id);
+
+    let sendPayload: any = { roomId, replyToId, tempId };
+    if (peerPubKey) {
+      const encrypted = await cryptoService.encryptMessage(content, peerPubKey);
+      if (encrypted) {
+        sendPayload.ciphertext = encrypted.ciphertext;
+        sendPayload.nonce = encrypted.nonce;
+        sendPayload.senderPublicKey = encrypted.senderPublicKey;
+      } else {
+        sendPayload.content = content;
+      }
+    } else {
+      sendPayload.content = content;
+    }
+
     const socket = getSocket();
     if (socket && socket.connected) {
       socket.emit(
         'send_message',
-        { roomId, content, replyToId, tempId },
+        sendPayload,
         (ack: any) => {
           if (ack?.ok && ack?.message) {
-            void localDb.saveMessage(ack.message);
+            const confirmed: Message = {
+              ...ack.message,
+              content,
+              isPending: false,
+            };
+            void localDb.saveMessage(confirmed);
             set((state) => {
               const rMsgs = (state.roomMessages[roomId] || []).map((m) =>
-                m.id === tempId ? { ...ack.message, isPending: false } : m,
+                m.id === tempId ? confirmed : m,
               );
               const activeMsgs = state.messages.map((m) =>
-                m.id === tempId ? { ...ack.message, isPending: false } : m,
+                m.id === tempId ? confirmed : m,
               );
               return {
                 roomMessages: { ...state.roomMessages, [roomId]: rMsgs },
@@ -1287,25 +1431,27 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       );
     } else {
       try {
-        const res = await api.post(`/messages/room/${roomId}`, {
-          content,
-          replyToId,
-        });
+        const res = await api.post(`/messages/room/${roomId}`, sendPayload);
         if (res.data) {
-          void localDb.saveMessage(res.data);
-        }
-        set((state) => {
-          const rMsgs = (state.roomMessages[roomId] || []).map((m) =>
-            m.id === tempId ? { ...res.data, isPending: false } : m,
-          );
-          const activeMsgs = state.messages.map((m) =>
-            m.id === tempId ? { ...res.data, isPending: false } : m,
-          );
-          return {
-            roomMessages: { ...state.roomMessages, [roomId]: rMsgs },
-            messages: activeMsgs,
+          const confirmed: Message = {
+            ...res.data,
+            content,
+            isPending: false,
           };
-        });
+          void localDb.saveMessage(confirmed);
+          set((state) => {
+            const rMsgs = (state.roomMessages[roomId] || []).map((m) =>
+              m.id === tempId ? confirmed : m,
+            );
+            const activeMsgs = state.messages.map((m) =>
+              m.id === tempId ? confirmed : m,
+            );
+            return {
+              roomMessages: { ...state.roomMessages, [roomId]: rMsgs },
+              messages: activeMsgs,
+            };
+          });
+        }
       } catch (err) {
         console.error('sendMessage error:', err);
       }

@@ -1,7 +1,7 @@
-import React from 'react';
-import { Tabs } from 'expo-router';
-import { ChronoTabBar } from '../../components/ChronoTabBar';
-import { chronoTheme } from '../../theme/colors';
+import React from "react";
+import { Tabs } from "expo-router";
+import { ChronoTabBar } from "../../components/ChronoTabBar";
+import { chronoTheme } from "../../theme/colors";
 
 const { colors } = chronoTheme;
 
@@ -14,11 +14,7 @@ const TAB_SCREEN_OPTIONS = {
   sceneStyle: {
     backgroundColor: colors.background,
   },
-  animation: 'fade',
-  transitionSpec: {
-    animation: 'timing',
-    config: { duration: 140 },
-  },
+  animation: "none",
   lazy: true,
 } as const;
 
@@ -28,13 +24,13 @@ export default function TabLayout() {
       <Tabs.Screen
         name="index"
         options={{
-          title: 'Sohbetler',
+          title: "Sohbetler",
         }}
       />
       <Tabs.Screen
         name="contacts"
         options={{
-          title: 'Kişiler',
+          title: "Kişiler",
         }}
       />
       <Tabs.Screen
@@ -46,7 +42,7 @@ export default function TabLayout() {
       <Tabs.Screen
         name="profile"
         options={{
-          title: 'Profil',
+          title: "Profil",
         }}
       />
     </Tabs>

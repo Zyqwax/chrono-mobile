@@ -1,4 +1,5 @@
 import { io, Socket } from 'socket.io-client';
+import { triggerSessionExpired } from './api';
 
 let socket: Socket | null = null;
 type SocketStateListener = (connected: boolean) => void;
@@ -54,6 +55,12 @@ export const connectSocket = (token: string, serverUrl = SOCKET_URL): Socket => 
   socket.on('disconnect', (reason) => {
     console.log('🔌 Socket.io disconnected:', reason);
     notifyListeners(false);
+  });
+
+  socket.on('session_expired', (data: any) => {
+    console.warn('⚠️ Socket.io session_expired:', data);
+    triggerSessionExpired(data?.reason || 'Oturumunuz başka bir cihazda açıldı.');
+    disconnectSocket();
   });
 
   socket.on('connect_error', (error) => {

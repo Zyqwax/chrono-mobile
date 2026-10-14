@@ -15,9 +15,12 @@ try {
   isLiveKitNativeReady = false;
 }
 
+export type VideoFacingMode = 'user' | 'environment';
+
 export type VideoTracksState = {
   local: VideoTrack | null;
   remote: VideoTrack | null;
+  facingMode: VideoFacingMode;
 };
 
 type TrackChangeListener = (tracks: VideoTracksState) => void;
@@ -26,13 +29,19 @@ class LiveKitService {
   private currentRoom: Room | null = null;
   private localVideoTrack: VideoTrack | null = null;
   private remoteVideoTrack: VideoTrack | null = null;
+  private cameraFacing: VideoFacingMode = 'user';
   private trackListeners: Set<TrackChangeListener> = new Set();
 
   getCurrentTracks(): VideoTracksState {
     return {
       local: this.localVideoTrack,
       remote: this.remoteVideoTrack,
+      facingMode: this.cameraFacing,
     };
+  }
+
+  getFacingMode(): VideoFacingMode {
+    return this.cameraFacing;
   }
 
   subscribeTracks(listener: TrackChangeListener) {
@@ -194,12 +203,19 @@ class LiveKitService {
   async switchCamera() {
     if (this.currentRoom?.localParticipant) {
       const camPub = this.currentRoom.localParticipant.getTrackPublication(Track.Source.Camera);
-      if (camPub?.videoTrack && typeof (camPub.videoTrack as any).restartTrack === 'function') {
+      const videoTrack = camPub?.videoTrack as any;
+      if (videoTrack) {
         try {
-          const currentFacing = (camPub.videoTrack as any).facingMode;
-          const nextFacing = currentFacing === 'environment' ? 'user' : 'environment';
-          await (camPub.videoTrack as any).restartTrack({ facingMode: nextFacing });
-          this.localVideoTrack = camPub.videoTrack;
+          const nextFacing: VideoFacingMode = this.cameraFacing === 'user' ? 'environment' : 'user';
+
+          if (typeof videoTrack.restartTrack === 'function') {
+            await videoTrack.restartTrack({ facingMode: nextFacing });
+          } else if (videoTrack.mediaStreamTrack && typeof videoTrack.mediaStreamTrack._switchCamera === 'function') {
+            videoTrack.mediaStreamTrack._switchCamera();
+          }
+
+          this.cameraFacing = nextFacing;
+          this.localVideoTrack = camPub?.videoTrack || this.localVideoTrack;
           this.notifyTrackListeners();
         } catch (err) {
           console.warn('Kamera değiştirme hatası:', err);
@@ -232,6 +248,7 @@ class LiveKitService {
     }
     this.localVideoTrack = null;
     this.remoteVideoTrack = null;
+    this.cameraFacing = 'user';
     this.notifyTrackListeners();
   }
 }

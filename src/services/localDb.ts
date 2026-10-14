@@ -330,6 +330,18 @@ class LocalDatabase {
       return [];
     }
   }
+
+  /**
+   * Oturum sonlandığında güvenlik amacıyla yerel veritabanındaki tüm mesajları siler.
+   */
+  async purgeAllData(): Promise<void> {
+    try {
+      const db = await this.getDb();
+      await db.runAsync('DELETE FROM messages;');
+    } catch (error) {
+      console.warn('LocalDb purgeAllData hatası:', error);
+    }
+  }
 }
 
 export const localDb = new LocalDatabase();

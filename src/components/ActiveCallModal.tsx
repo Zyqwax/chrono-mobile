@@ -49,7 +49,11 @@ export const ActiveCallModal: React.FC = () => {
   const [livekitServer, setLivekitServer] = useState<string | null>(null);
   const [livekitLoading, setLivekitLoading] = useState(false);
   const [isMinimized, setIsMinimized] = useState(false);
-  const [videoTracks, setVideoTracks] = useState<VideoTracksState>({ local: null, remote: null });
+  const [videoTracks, setVideoTracks] = useState<VideoTracksState>({
+    local: null,
+    remote: null,
+    facingMode: 'user',
+  });
 
   // Canlı LiveKit video kanallarını dinle
   useEffect(() => {
@@ -408,7 +412,7 @@ export const ActiveCallModal: React.FC = () => {
                   videoTrack={videoTracks.local}
                   style={styles.pipVideo}
                   objectFit="cover"
-                  mirror={true}
+                  mirror={videoTracks.facingMode === 'user'}
                   zOrder={1}
                 />
               ) : (

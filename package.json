@@ -1,12 +1,13 @@
 {
   "name": "chrono-mobile",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "main": "expo-router/entry",
   "dependencies": {
     "@config-plugins/react-native-callkeep": "^14.0.2",
     "@expo/vector-icons": "^15.1.1",
     "@livekit/react-native": "^3.0.0",
     "@livekit/react-native-webrtc": "^144.2.0",
+    "@noble/hashes": "^2.4.0",
     "@notifee/react-native": "^9.1.8",
     "@react-native-async-storage/async-storage": "2.2.0",
     "axios": "^1.7.9",
@@ -15,12 +16,14 @@
     "expo-audio": "~57.0.5",
     "expo-clipboard": "~57.0.2",
     "expo-constants": "~57.0.21",
+    "expo-crypto": "^57.0.4",
     "expo-dev-client": "^57.0.19",
     "expo-device": "~57.0.2",
     "expo-image-picker": "^57.0.20",
     "expo-linking": "~57.0.12",
     "expo-notifications": "^57.0.22",
     "expo-router": "~57.0.25",
+    "expo-secure-store": "^57.0.4",
     "expo-sqlite": "~57.0.4",
     "expo-status-bar": "~57.0.1",
     "expo-task-manager": "~57.0.21",
@@ -33,6 +36,8 @@
     "react-native-safe-area-context": "~5.6.0",
     "react-native-screens": "~4.26.2",
     "socket.io-client": "^4.8.1",
+    "tweetnacl": "^1.0.3",
+    "tweetnacl-util": "^0.15.1",
     "zustand": "^5.0.3"
   },
   "devDependencies": {
@@ -47,7 +52,10 @@
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "version:patch": "node scripts/bump-version.js patch",
+    "version:minor": "node scripts/bump-version.js minor",
+    "version:major": "node scripts/bump-version.js major"
   },
   "private": true
 }

@@ -24,6 +24,7 @@ import { useRouter } from 'expo-router';
 import { api } from '../services/api';
 import { useChatStore } from '../store/useChatStore';
 import { registerForPushNotificationsAsync } from '../services/notifications';
+import { cryptoService } from '../services/cryptoService';
 
 type AuthStage =
   | 'CHECK_USERNAME'
@@ -31,7 +32,9 @@ type AuthStage =
   | 'REGISTER_NAME'
   | 'REGISTER_EMAIL'
   | 'REGISTER_PASSWORD'
-  | 'ENTER_PASSWORD';
+  | 'REGISTER_PIN'
+  | 'ENTER_PASSWORD'
+  | 'ENTER_RECOVERY_PIN';
 
 interface FoundUser {
   id: string;
@@ -146,6 +149,8 @@ export const AuthScreen: React.FC = () => {
   const [password, setPassword] = useState('');
   const [displayName, setDisplayName] = useState('');
   const [email, setEmail] = useState('');
+  const [securityPin, setSecurityPin] = useState('');
+  const [pendingLoginResponse, setPendingLoginResponse] = useState<any>(null);
 
   const insets = useSafeAreaInsets();
   const [foundUser, setFoundUser] = useState<FoundUser | null>(null);
@@ -249,6 +254,18 @@ export const AuthScreen: React.FC = () => {
         password,
         pushToken,
       });
+
+      const keyBackup = res.data?.keyBackup;
+      const hasKeys = await cryptoService.hasKeys();
+
+      // Yeni cihaz durumu: Cihazda anahtar yoksa ve sunucuda şifreli yedek varsa PIN sor
+      if (!hasKeys && keyBackup?.encryptedPrivateKey) {
+        setPendingLoginResponse(res.data);
+        setSecurityPin('');
+        setStage('ENTER_RECOVERY_PIN');
+        return;
+      }
+
       setAuth(res.data.user, res.data.accessToken);
       router.replace('/(tabs)');
     } catch (err: any) {
@@ -261,7 +278,41 @@ export const AuthScreen: React.FC = () => {
   };
 
   // ---------------------------------------------------------------------------
-  // 3. Kayıt Adım Doğrulamaları
+  // 3. PIN ile Anahtar Kurtarma (Yeni Cihazda Giriş)
+  // ---------------------------------------------------------------------------
+  const handleRecoverPin = async () => {
+    setError(null);
+    if (!securityPin || securityPin.length < 6) {
+      setError('Lütfen 6 haneli güvenlik PIN kodunuzu girin');
+      return;
+    }
+
+    try {
+      setLoading(true);
+      const keyBackup = pendingLoginResponse?.keyBackup;
+      if (!keyBackup) {
+        setAuth(pendingLoginResponse.user, pendingLoginResponse.accessToken);
+        router.replace('/(tabs)');
+        return;
+      }
+
+      const success = await cryptoService.restoreKeyBackup(securityPin, keyBackup);
+      if (!success) {
+        setError('Hatalı PIN kodu! Geçmiş mesajlarınız çözülemedi. Lütfen tekrar deneyin.');
+        return;
+      }
+
+      setAuth(pendingLoginResponse.user, pendingLoginResponse.accessToken);
+      router.replace('/(tabs)');
+    } catch (err: any) {
+      setError(err?.message || 'Anahtar kurtarma sırasında bir hata oluştu.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // ---------------------------------------------------------------------------
+  // 4. Kayıt Adım Doğrulamaları
   // ---------------------------------------------------------------------------
   const handleNextFromDisplayName = () => {
     setError(null);
@@ -282,18 +333,31 @@ export const AuthScreen: React.FC = () => {
     setStage('REGISTER_PASSWORD');
   };
 
-  // ---------------------------------------------------------------------------
-  // 4. Kayıt Tamamla (POST /auth/register)
-  // ---------------------------------------------------------------------------
-  const handleRegister = async () => {
+  const handleNextFromPassword = () => {
     setError(null);
     if (!password || password.length < 6) {
       setError('Şifre en az 6 karakter olmalıdır');
       return;
     }
+    setSecurityPin('');
+    setStage('REGISTER_PIN');
+  };
+
+  // ---------------------------------------------------------------------------
+  // 5. Kayıt Tamamla (PIN ile X25519 Anahtarlarını Üret ve POST /auth/register)
+  // ---------------------------------------------------------------------------
+  const handleCompleteRegisterWithPin = async () => {
+    setError(null);
+    if (!securityPin || securityPin.length < 6) {
+      setError('Lütfen en az 6 haneli bir Güvenlik PIN kodu belirleyin');
+      return;
+    }
 
     try {
       setLoading(true);
+      // 1. TweetNaCl X25519 anahtar çiftini üret ve PIN ile PBKDF2 şifrele
+      const keyBackup = await cryptoService.createKeyBackup(securityPin);
+
       let pushToken: string | null = null;
       try {
         pushToken = await registerForPushNotificationsAsync();
@@ -307,13 +371,17 @@ export const AuthScreen: React.FC = () => {
         email: email.trim().toLowerCase(),
         password,
         pushToken,
+        publicKey: keyBackup.publicKey,
+        encryptedPrivateKey: keyBackup.encryptedPrivateKey,
+        keyBackupSalt: keyBackup.keyBackupSalt,
+        keyBackupNonce: keyBackup.keyBackupNonce,
       });
 
       setAuth(res.data.user, res.data.accessToken);
       router.replace('/(tabs)');
     } catch (err: any) {
       const msg =
-        err.response?.data?.message || 'Kayıt sırasında bir hata oluştu.';
+        err.response?.data?.message || err?.message || 'Kayıt sırasında bir hata oluştu.';
       setError(msg);
     } finally {
       setLoading(false);
@@ -325,7 +393,7 @@ export const AuthScreen: React.FC = () => {
   const hasLetterAndNumber = /[a-zA-Z]/.test(password) && /[0-9]/.test(password);
   const isStrong = password.length >= 8 && /[^a-zA-Z0-9]/.test(password);
 
-  // Stepper Header (1/3, 2/3, 3/3)
+  // Stepper Header (1/4, 2/4, 3/4, 4/4)
   const renderStepperHeader = (currentStep: number) => (
     <View style={styles.stepperHeader}>
       <TouchableOpacity
@@ -335,6 +403,7 @@ export const AuthScreen: React.FC = () => {
           if (currentStep === 1) setStage('USER_NOT_FOUND');
           else if (currentStep === 2) setStage('REGISTER_NAME');
           else if (currentStep === 3) setStage('REGISTER_EMAIL');
+          else if (currentStep === 4) setStage('REGISTER_PASSWORD');
         }}
         activeOpacity={0.7}
       >
@@ -345,9 +414,10 @@ export const AuthScreen: React.FC = () => {
         <View style={[styles.barItem, currentStep >= 1 ? styles.barActive : styles.barInactive]} />
         <View style={[styles.barItem, currentStep >= 2 ? styles.barActive : styles.barInactive]} />
         <View style={[styles.barItem, currentStep >= 3 ? styles.barActive : styles.barInactive]} />
+        <View style={[styles.barItem, currentStep >= 4 ? styles.barActive : styles.barInactive]} />
       </View>
 
-      <Text style={styles.stepCounterText}>{currentStep}/3</Text>
+      <Text style={styles.stepCounterText}>{currentStep}/4</Text>
     </View>
   );
 
@@ -500,8 +570,8 @@ export const AuthScreen: React.FC = () => {
               placeholder="••••••••"
               icon={<Ionicons name="lock-closed-outline" size={20} color="#38BDF8" />}
               isPassword
-              onSubmitEditing={handleRegister}
-              returnKeyType="done"
+              onSubmitEditing={handleNextFromPassword}
+              returnKeyType="next"
               hasError={!!error}
             />
 
@@ -528,6 +598,45 @@ export const AuthScreen: React.FC = () => {
 
             <Text style={styles.helperText}>
               En az 6 karakter. Harf, rakam ve sembol karıştırmak{'\n'}güçlendirir.
+            </Text>
+
+            {error && <Text style={styles.errorInlineText}>{error}</Text>}
+          </View>
+        );
+
+      case 'REGISTER_PIN':
+        return (
+          <View style={styles.stageContent}>
+            {renderStepperHeader(4)}
+
+            <View style={styles.usernameChip}>
+              <Text style={styles.usernameChipText}>@{username}</Text>
+            </View>
+
+            <Text style={styles.stageTitle}>Kurtarma PIN'i Belirle</Text>
+            <Text style={styles.stageSubtitle}>
+              Mesajlarınız uçtan uca şifrelenir. Cihaz değiştirdiğinizde geçmiş mesajlarınızı çözmek için 6 haneli bu PIN kodunu kullanacaksınız.
+            </Text>
+
+            <AuthInputCard
+              label="6 Haneli Güvenlik PIN'i"
+              value={securityPin}
+              onChangeText={(t) => {
+                const clean = t.replace(/[^0-9]/g, '').slice(0, 6);
+                setSecurityPin(clean);
+                if (error) setError(null);
+              }}
+              placeholder="••••••"
+              icon={<Ionicons name="shield-checkmark-outline" size={20} color="#38BDF8" />}
+              isPassword
+              keyboardType="number-pad"
+              onSubmitEditing={handleCompleteRegisterWithPin}
+              returnKeyType="done"
+              hasError={!!error}
+            />
+
+            <Text style={styles.helperText}>
+              🔒 Bu PIN kodunu güvenli bir yerde saklayın. Sıfır-bilgi (Zero-Knowledge) mimarisi nedeniyle sunucu bile bu PIN'i göremez.
             </Text>
 
             {error && <Text style={styles.errorInlineText}>{error}</Text>}
@@ -624,6 +733,84 @@ export const AuthScreen: React.FC = () => {
             >
               <Text style={styles.forgotPasswordText}>Şifremi unuttum</Text>
             </TouchableOpacity>
+
+            {error && <Text style={styles.errorInlineText}>{error}</Text>}
+          </View>
+        );
+
+      case 'ENTER_RECOVERY_PIN':
+        return (
+          <View style={styles.stageContent}>
+            <View style={styles.loginHeaderBar}>
+              <TouchableOpacity
+                style={styles.backCircleBtn}
+                onPress={() => {
+                  setError(null);
+                  setPendingLoginResponse(null);
+                  setStage('ENTER_PASSWORD');
+                }}
+                activeOpacity={0.7}
+              >
+                <Ionicons name="chevron-back" size={22} color="#FFFFFF" />
+              </TouchableOpacity>
+
+              <View style={styles.smallHeaderLogo}>
+                <Image
+                  source={require('../../assets/app-icon-rounded.png')}
+                  style={styles.smallLogoImage}
+                  resizeMode="cover"
+                />
+              </View>
+            </View>
+
+            <View style={styles.userFoundCard}>
+              {foundUser?.avatarUrl ? (
+                <Image source={{ uri: foundUser.avatarUrl }} style={styles.userAvatarImage} />
+              ) : (
+                <View style={styles.userAvatarFallback}>
+                  <Text style={styles.userAvatarText}>
+                    {(foundUser?.displayName || foundUser?.username || 'U')
+                      .charAt(0)
+                      .toUpperCase()}
+                  </Text>
+                </View>
+              )}
+
+              <View style={styles.userFoundInfo}>
+                <Text style={styles.userFoundDisplayName} numberOfLines={1}>
+                  {foundUser?.displayName || 'Kullanıcı'}
+                </Text>
+                <Text style={styles.userFoundUsername} numberOfLines={1}>
+                  @{foundUser?.username || username}
+                </Text>
+              </View>
+            </View>
+
+            <Text style={styles.stageTitle}>Kurtarma PIN'inizi Girin</Text>
+            <Text style={styles.stageSubtitle}>
+              Yeni bir cihazdan giriş yapıyorsunuz. Uçtan uca şifreli geçmiş mesajlarınızı çözmek için 6 haneli Güvenlik PIN'inizi girin.
+            </Text>
+
+            <AuthInputCard
+              label="6 Haneli Güvenlik PIN'i"
+              value={securityPin}
+              onChangeText={(t) => {
+                const clean = t.replace(/[^0-9]/g, '').slice(0, 6);
+                setSecurityPin(clean);
+                if (error) setError(null);
+              }}
+              placeholder="••••••"
+              icon={<Ionicons name="key-outline" size={20} color="#38BDF8" />}
+              isPassword
+              keyboardType="number-pad"
+              onSubmitEditing={handleRecoverPin}
+              returnKeyType="done"
+              hasError={!!error}
+            />
+
+            <Text style={styles.helperText}>
+              🔑 Bu PIN kodu cihazınızda özel anahtarınızı (X25519) çözecek ve sunucudaki geçmiş mesajlarınızı okunabilir yapacaktır.
+            </Text>
 
             {error && <Text style={styles.errorInlineText}>{error}</Text>}
           </View>
@@ -728,7 +915,21 @@ export const AuthScreen: React.FC = () => {
         return (
           <TouchableOpacity
             style={styles.actionBtn}
-            onPress={handleRegister}
+            onPress={handleNextFromPassword}
+            activeOpacity={0.85}
+          >
+            <Text style={styles.actionBtnText}>İleri</Text>
+            <View style={styles.actionBtnIconCircle}>
+              <Ionicons name="arrow-forward" size={17} color="#FFFFFF" />
+            </View>
+          </TouchableOpacity>
+        );
+
+      case 'REGISTER_PIN':
+        return (
+          <TouchableOpacity
+            style={styles.actionBtn}
+            onPress={handleCompleteRegisterWithPin}
             disabled={loading}
             activeOpacity={0.85}
           >
@@ -760,6 +961,27 @@ export const AuthScreen: React.FC = () => {
                 <Text style={styles.actionBtnText}>Giriş Yap</Text>
                 <View style={styles.actionBtnIconCircle}>
                   <Ionicons name="arrow-forward" size={17} color="#FFFFFF" />
+                </View>
+              </>
+            )}
+          </TouchableOpacity>
+        );
+
+      case 'ENTER_RECOVERY_PIN':
+        return (
+          <TouchableOpacity
+            style={styles.actionBtn}
+            onPress={handleRecoverPin}
+            disabled={loading}
+            activeOpacity={0.85}
+          >
+            {loading ? (
+              <ActivityIndicator color="#FFFFFF" />
+            ) : (
+              <>
+                <Text style={styles.actionBtnText}>Geçmişi Çöz & Giriş Yap</Text>
+                <View style={styles.actionBtnIconCircle}>
+                  <Ionicons name="key" size={17} color="#FFFFFF" />
                 </View>
               </>
             )}

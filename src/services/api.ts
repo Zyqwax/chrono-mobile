@@ -59,6 +59,13 @@ api.interceptors.response.use(
       return api(config);
     }
 
+    if (error.response?.status === 401) {
+      const data = error.response.data;
+      if (data?.code === 'SESSION_EXPIRED' || (typeof data?.message === 'string' && data.message.includes('sonlandırıldı'))) {
+        triggerSessionExpired(data?.message || 'Oturumunuz başka bir cihazda açıldığı için sonlandırıldı.');
+      }
+    }
+
     if (!error.response || error.code === 'ECONNABORTED' || error.message?.includes('Network Error')) {
       notifyApiStatus(false, 'Sunucuya ulaşılamıyor (Ağ Hatası)');
     } else if (error.response?.status >= 500) {
@@ -70,6 +77,26 @@ api.interceptors.response.use(
     return Promise.reject(error);
   },
 );
+
+type SessionExpiredListener = (reason?: string) => void;
+const sessionExpiredListeners: Set<SessionExpiredListener> = new Set();
+
+export const subscribeSessionExpired = (listener: SessionExpiredListener) => {
+  sessionExpiredListeners.add(listener);
+  return () => {
+    sessionExpiredListeners.delete(listener);
+  };
+};
+
+export const triggerSessionExpired = (reason?: string) => {
+  sessionExpiredListeners.forEach((fn) => {
+    try {
+      fn(reason);
+    } catch (e) {
+      console.error('Session expired listener error:', e);
+    }
+  });
+};
 
 export const setAuthToken = (token: string | null) => {
   if (token) {
