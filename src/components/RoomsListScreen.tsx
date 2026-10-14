@@ -822,8 +822,8 @@ const RoomItem = memo(function RoomItem({
 }: RoomItemProps) {
   const isDirect = item.type === 'DIRECT';
   const hasActiveVoice = !isDirect && voiceCount > 0;
-  const isLiveVoice = hasActiveVoice || isMyVoiceRoom;
-  const lastMsg = item.lastMessage;
+  const roomMsgs = useChatStore((s) => s.roomMessages[item.id]);
+  const lastMsg = (item.lastMessage?.content ? item.lastMessage : roomMsgs?.[0]) || item.lastMessage;
   const isMine = !!lastMsg && lastMsg.senderId === currentUserId;
 
   const chatName = isDirect
@@ -916,7 +916,7 @@ const RoomItem = memo(function RoomItem({
               ) : null}
               {lastMsg?.type === 'CALL'
                 ? formatCallPreview(lastMsg.content, isMine)
-                : lastMsg?.content}
+                : lastMsg?.content || (lastMsg?.ciphertext ? '🔒 Şifreli mesaj' : '')}
             </Text>
           )}
 

@@ -30,9 +30,11 @@ import { ChronoAvatar } from "./ChronoAvatar";
 import { ChronoProgressRing, ChronoRingStatus } from "./ChronoProgressRing";
 import { chronoTheme } from "../theme/colors";
 import { useShallow } from "zustand/react/shallow";
+import * as Clipboard from "expo-clipboard";
 import { requestCallPermissions } from "../services/permissions";
 import { CallConfirmModal } from "./modals/CallConfirmModal";
-import { MessageActionsModal } from "./modals/MessageActionsModal";
+import { ForwardMessageModal } from "./modals/ForwardMessageModal";
+import { MessageInfoModal } from "./modals/MessageInfoModal";
 
 const CHAT_BACKGROUND = require("../../assets/chrono-chat-background.png");
 const EMPTY_MESSAGES: Message[] = [];
@@ -73,7 +75,11 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({ room, onBack }) 
   const [replyMessage, setReplyMessage] = useState<Message | null>(null);
   const [editingMessage, setEditingMessage] = useState<Message | null>(null);
   const [callModalConfig, setCallModalConfig] = useState<{ visible: boolean; isVideo: boolean } | null>(null);
-  const [selectedMessageForAction, setSelectedMessageForAction] = useState<Message | null>(null);
+
+  // Çoklu Mesaj Seçimi (Selection Mode) state'leri
+  const [selectedMessages, setSelectedMessages] = useState<Message[]>([]);
+  const [forwardModalVisible, setForwardModalVisible] = useState(false);
+  const [infoModalMessage, setInfoModalMessage] = useState<Message | null>(null);
 
   const handleSwipeReply = useCallback((item: Message) => {
     setReplyMessage(item);
@@ -82,19 +88,26 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({ room, onBack }) 
     }, 60);
   }, []);
 
-  // Donanım geri tuşuna basıldığında mesaj yanıtlama veya düzenleme modundan çık
+  // Donanım geri tuşuna basıldığında mesaj seçimi, yanıtlama veya düzenleme modundan çık
   useEffect(() => {
-    if (!replyMessage && !editingMessage) return;
     const sub = BackHandler.addEventListener("hardwareBackPress", () => {
-      if (replyMessage) setReplyMessage(null);
+      if (selectedMessages.length > 0) {
+        setSelectedMessages([]);
+        return true;
+      }
+      if (replyMessage) {
+        setReplyMessage(null);
+        return true;
+      }
       if (editingMessage) {
         setEditingMessage(null);
         setInputText("");
+        return true;
       }
-      return true;
+      return false;
     });
     return () => sub.remove();
-  }, [replyMessage, editingMessage]);
+  }, [selectedMessages.length, replyMessage, editingMessage]);
 
   // Sığ (shallow) seçici: yalnızca bu ekranın kullandığı aksiyonlar ve profil değişince render olur
   const {
@@ -112,6 +125,7 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({ room, onBack }) 
     joinRoomVoice,
     startCall,
     activeVoiceCount,
+    rooms,
   } = useChatStore(
     useShallow((s) => ({
       currentUserId: s.currentUser?.id,
@@ -128,6 +142,7 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({ room, onBack }) 
       joinRoomVoice: s.joinRoomVoice,
       startCall: s.startCall,
       activeVoiceCount: s.roomVoiceStates?.[room.id]?.count ?? 0,
+      rooms: s.rooms,
     })),
   );
 
@@ -293,9 +308,109 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({ room, onBack }) 
     setVoiceSheetVisible(true);
   };
 
+  const isSelectionMode = selectedMessages.length > 0;
+  const selectedMessageIds = useMemo(() => new Set(selectedMessages.map((m) => m.id)), [selectedMessages]);
+
   const handleMessageLongPress = useCallback((item: Message) => {
-    setSelectedMessageForAction(item);
+    setSelectedMessages((prev) => {
+      const exists = prev.some((m) => m.id === item.id);
+      return exists ? prev.filter((m) => m.id !== item.id) : [...prev, item];
+    });
   }, []);
+
+  const handleMessagePress = useCallback((item: Message) => {
+    setSelectedMessages((prev) => {
+      if (prev.length === 0) return prev;
+      const exists = prev.some((m) => m.id === item.id);
+      return exists ? prev.filter((m) => m.id !== item.id) : [...prev, item];
+    });
+  }, []);
+
+  const handleSelectionReply = useCallback(() => {
+    if (selectedMessages.length !== 1) return;
+    const msg = selectedMessages[0];
+    setSelectedMessages([]);
+    setReplyMessage(msg);
+    setTimeout(() => {
+      textInputRef.current?.focus();
+    }, 60);
+  }, [selectedMessages]);
+
+  const handleSelectionCopy = useCallback(async () => {
+    if (selectedMessages.length === 0) return;
+    const textToCopy = selectedMessages
+      .map((m) => m.content || "")
+      .filter(Boolean)
+      .join("\n");
+    if (textToCopy) {
+      await Clipboard.setStringAsync(textToCopy);
+    }
+    const count = selectedMessages.length;
+    setSelectedMessages([]);
+    Alert.alert("Kopyalandı", count > 1 ? `${count} mesaj panoya kopyalandı.` : "Mesaj panoya kopyalandı.");
+  }, [selectedMessages]);
+
+  const handleSelectionForward = useCallback(() => {
+    if (selectedMessages.length === 0) return;
+    setForwardModalVisible(true);
+  }, [selectedMessages]);
+
+  const handleExecuteForward = useCallback(
+    async (targetRoom: Room) => {
+      setForwardModalVisible(false);
+      const messagesToForward = [...selectedMessages];
+      setSelectedMessages([]);
+
+      for (const msg of messagesToForward) {
+        if (msg.content) {
+          await sendMessage(targetRoom.id, msg.content);
+        }
+      }
+      const targetName =
+        targetRoom.type === "DIRECT"
+          ? targetRoom.peer?.displayName || targetRoom.peer?.username || "Sohbet"
+          : targetRoom.name || "Sohbet Odası";
+
+      Alert.alert(
+        "İletildi",
+        messagesToForward.length > 1
+          ? `${messagesToForward.length} mesaj "${targetName}" sohbetine iletildi.`
+          : `Mesaj "${targetName}" sohbetine iletildi.`,
+      );
+    },
+    [selectedMessages, sendMessage],
+  );
+
+  const handleSelectionInfo = useCallback(() => {
+    if (selectedMessages.length !== 1) return;
+    setInfoModalMessage(selectedMessages[0]);
+  }, [selectedMessages]);
+
+  const handleSelectionDelete = useCallback(() => {
+    if (selectedMessages.length === 0) return;
+    const count = selectedMessages.length;
+
+    Alert.alert(
+      "Mesajları Sil",
+      count > 1
+        ? `Seçilen ${count} mesajı silmek istediğinize emin misiniz?`
+        : "Bu mesajı silmek istediğinize emin misiniz?",
+      [
+        { text: "Vazgeç", style: "cancel" },
+        {
+          text: "Sil",
+          style: "destructive",
+          onPress: async () => {
+            const ids = selectedMessages.map((m) => m.id);
+            setSelectedMessages([]);
+            for (const id of ids) {
+              await deleteMessage(id);
+            }
+          },
+        },
+      ],
+    );
+  }, [selectedMessages, deleteMessage]);
 
   const isVoiceActiveInThisRoom = !isDirect && (activeVoiceCount > 0 || activeVoiceRoomId === room.id);
   const isMeInVoice = activeVoiceRoomId === room.id;
@@ -311,18 +426,18 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({ room, onBack }) 
       );
       return {
         _id: item.id,
-        text: item.deletedAt ? "🚫 Bu mesaj silindi" : item.content,
+        text: item.deletedAt ? "Bu mesaj silindi" : (item.content ?? ""),
         createdAt: new Date(item.createdAt),
         user: {
           _id: item.senderId,
           name: item.sender?.displayName || item.sender?.username || "Kullanıcı",
-          avatar: item.sender?.avatarUrl || undefined,
+          avatar: null,
         },
         system: isSystem,
         sent: !isPending,
         received: isRead,
         raw: item,
-      } as IMessage & { raw: Message };
+      } as unknown as IMessage & { raw: Message };
     });
   }, [messages, effectiveOthersReadAt, canShowReadReceipt]);
 
@@ -336,89 +451,174 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({ room, onBack }) 
         {/* ------------------------------------------------------------- */}
         {/* Telegram Style Chat Header                                    */}
         {/* ------------------------------------------------------------- */}
+        {/* ------------------------------------------------------------- */}
+        {/* Telegram Style Chat Header or Selection Action Bar             */}
+        {/* ------------------------------------------------------------- */}
+        {/* ------------------------------------------------------------- */}
+        {/* Header: Sabit Kapsayıcı, İçerik Dinamik Değişir               */}
+        {/* ------------------------------------------------------------- */}
         <View style={styles.header}>
-          <TouchableOpacity onPress={onBack} style={styles.backBtn} activeOpacity={0.7}>
-            <Ionicons name="chevron-back" size={24} color={colors.textPrimary} />
-          </TouchableOpacity>
+          {isSelectionMode ? (
+            <>
+              <TouchableOpacity
+                onPress={() => setSelectedMessages([])}
+                style={styles.backBtn}
+                activeOpacity={0.7}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              >
+                <Ionicons name="close" size={24} color="#FFFFFF" />
+              </TouchableOpacity>
 
-          {/* Room / Peer Info */}
-          <TouchableOpacity style={styles.roomHeaderInfo} onPress={() => setInfoModalVisible(true)} activeOpacity={0.8}>
-            <ChronoAvatar
-              size={38}
-              uri={isDirect ? currentPeer?.avatarUrl : currentRoom.iconUrl}
-              name={chatTitle}
-              emoji={
-                !isDirect && (chatTitle.startsWith("🔥") || true)
-                  ? chatTitle.match(/^(\p{Emoji})/u)?.[0] || "🔥"
-                  : undefined
-              }
-              online={isDirect && isPeerOnline}
-              style={{ marginRight: 10 }}
-            />
+              <View style={styles.selectionTitleContainer}>
+                <Text style={styles.selectionCountText}>{selectedMessages.length}</Text>
+              </View>
 
-            <View style={styles.headerTitles}>
-              <Text style={styles.roomName} numberOfLines={1}>
-                {!isDirect && chatTitle.match(/^(\p{Emoji})/u)
-                  ? chatTitle.replace(/^(\p{Emoji})/u, "").trim()
-                  : chatTitle}
-              </Text>
-              <Text style={styles.roomStatus} numberOfLines={1}>
-                {typingUsers.length > 0 ? (
-                  <Text style={{ color: "#38BDF8" }}>
-                    {typingUsers.map((u) => u.displayName).join(", ")} {getTranslation("typing", "yazıyor...")}
-                  </Text>
-                ) : isDirect ? (
-                  isPeerOnline ? (
-                    <Text style={{ color: "#10B981" }}>{getTranslation("online", "çevrimiçi")}</Text>
-                  ) : (
-                    <Text style={{ color: "#94A3B8" }}>{peerStatusInfo.text}</Text>
-                  )
-                ) : (
-                  `${currentRoom.membersCount || currentRoom.members?.length || 2} ${getTranslation("member", "üye")} · ${activeVoiceCount > 0 ? `${activeVoiceCount} ${getTranslation("online", "çevrimiçi")}` : `1 ${getTranslation("online", "çevrimiçi")}`}`
+              <View style={styles.headerActions}>
+                {/* Yanıtla (Reply - Yalnızca 1 mesaj seçiliyse) */}
+                {selectedMessages.length === 1 && (
+                  <TouchableOpacity
+                    style={styles.actionIconBtn}
+                    onPress={handleSelectionReply}
+                    activeOpacity={0.7}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  >
+                    <Ionicons name="arrow-undo-outline" size={22} color="#FFFFFF" />
+                  </TouchableOpacity>
                 )}
-              </Text>
-            </View>
-          </TouchableOpacity>
 
-          {/* Header Actions: DM -> Sesli & Görüntülü Arama; Oda -> [Sesli] Butonu + 3 Nokta */}
-          <View style={styles.headerActions}>
-            {isDirect ? (
-              <>
+                {/* Kopyala (Copy) */}
                 <TouchableOpacity
                   style={styles.actionIconBtn}
-                  onPress={() => handleStartCall(false)}
+                  onPress={handleSelectionCopy}
                   activeOpacity={0.7}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                 >
-                  <Ionicons name="call-outline" size={21} color="#FFFFFF" />
+                  <Ionicons name="copy-outline" size={21} color="#FFFFFF" />
                 </TouchableOpacity>
+
+                {/* İlet (Forward) */}
                 <TouchableOpacity
                   style={styles.actionIconBtn}
-                  onPress={() => handleStartCall(true)}
+                  onPress={handleSelectionForward}
                   activeOpacity={0.7}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                 >
-                  <Ionicons name="videocam-outline" size={22} color="#FFFFFF" />
+                  <Ionicons name="arrow-redo-outline" size={22} color="#FFFFFF" />
                 </TouchableOpacity>
-              </>
-            ) : (
-              <>
-                <TouchableOpacity
-                  style={[styles.headerVoicePillBtn, isVoiceActiveInThisRoom && styles.headerVoicePillActive]}
-                  onPress={handleVoiceJoin}
-                  activeOpacity={0.8}
-                >
-                  <Ionicons name="mic" size={15} color="#FFFFFF" style={{ marginRight: 5 }} />
-                  <Text style={styles.headerVoicePillText}>Sesli</Text>
-                </TouchableOpacity>
+
+                {/* Bilgi (Info - Yalnızca 1 mesaj seçiliyse) */}
+                {selectedMessages.length === 1 && (
+                  <TouchableOpacity
+                    style={styles.actionIconBtn}
+                    onPress={handleSelectionInfo}
+                    activeOpacity={0.7}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  >
+                    <Ionicons name="information-circle-outline" size={23} color="#FFFFFF" />
+                  </TouchableOpacity>
+                )}
+
+                {/* Sil (Delete) */}
                 <TouchableOpacity
                   style={styles.actionIconBtn}
-                  onPress={() => setInfoModalVisible(true)}
+                  onPress={handleSelectionDelete}
                   activeOpacity={0.7}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                 >
-                  <Ionicons name="ellipsis-vertical" size={20} color="#FFFFFF" />
+                  <Ionicons name="trash-outline" size={21} color="#EF4444" />
                 </TouchableOpacity>
-              </>
-            )}
-          </View>
+              </View>
+            </>
+          ) : (
+            <>
+              <TouchableOpacity onPress={onBack} style={styles.backBtn} activeOpacity={0.7}>
+                <Ionicons name="chevron-back" size={24} color={colors.textPrimary} />
+              </TouchableOpacity>
+
+              {/* Room / Peer Info */}
+              <TouchableOpacity
+                style={styles.roomHeaderInfo}
+                onPress={() => setInfoModalVisible(true)}
+                activeOpacity={0.8}
+              >
+                <ChronoAvatar
+                  size={38}
+                  uri={isDirect ? currentPeer?.avatarUrl : currentRoom.iconUrl}
+                  name={chatTitle}
+                  emoji={
+                    !isDirect && (chatTitle.startsWith("🔥") || true)
+                      ? chatTitle.match(/^(\p{Emoji})/u)?.[0] || "🔥"
+                      : undefined
+                  }
+                  online={isDirect && isPeerOnline}
+                  style={{ marginRight: 10 }}
+                />
+
+                <View style={styles.headerTitles}>
+                  <Text style={styles.roomName} numberOfLines={1}>
+                    {!isDirect && chatTitle.match(/^(\p{Emoji})/u)
+                      ? chatTitle.replace(/^(\p{Emoji})/u, "").trim()
+                      : chatTitle}
+                  </Text>
+                  <Text style={styles.roomStatus} numberOfLines={1}>
+                    {typingUsers.length > 0 ? (
+                      <Text style={{ color: "#38BDF8" }}>
+                        {typingUsers.map((u) => u.displayName).join(", ")} {getTranslation("typing", "yazıyor...")}
+                      </Text>
+                    ) : isDirect ? (
+                      isPeerOnline ? (
+                        <Text style={{ color: "#10B981" }}>{getTranslation("online", "çevrimiçi")}</Text>
+                      ) : (
+                        <Text style={{ color: "#94A3B8" }}>{peerStatusInfo.text}</Text>
+                      )
+                    ) : (
+                      `${currentRoom.membersCount || currentRoom.members?.length || 2} ${getTranslation("member", "üye")} · ${activeVoiceCount > 0 ? `${activeVoiceCount} ${getTranslation("online", "çevrimiçi")}` : `1 ${getTranslation("online", "çevrimiçi")}`}`
+                    )}
+                  </Text>
+                </View>
+              </TouchableOpacity>
+
+              {/* Header Actions: DM -> Sesli & Görüntülü Arama; Oda -> [Sesli] Butonu + 3 Nokta */}
+              <View style={styles.headerActions}>
+                {isDirect ? (
+                  <>
+                    <TouchableOpacity
+                      style={styles.actionIconBtn}
+                      onPress={() => handleStartCall(false)}
+                      activeOpacity={0.7}
+                    >
+                      <Ionicons name="call-outline" size={21} color="#FFFFFF" />
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.actionIconBtn}
+                      onPress={() => handleStartCall(true)}
+                      activeOpacity={0.7}
+                    >
+                      <Ionicons name="videocam-outline" size={22} color="#FFFFFF" />
+                    </TouchableOpacity>
+                  </>
+                ) : (
+                  <>
+                    <TouchableOpacity
+                      style={[styles.headerVoicePillBtn, isVoiceActiveInThisRoom && styles.headerVoicePillActive]}
+                      onPress={handleVoiceJoin}
+                      activeOpacity={0.8}
+                    >
+                      <Ionicons name="mic" size={15} color="#FFFFFF" style={{ marginRight: 5 }} />
+                      <Text style={styles.headerVoicePillText}>Sesli</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.actionIconBtn}
+                      onPress={() => setInfoModalVisible(true)}
+                      activeOpacity={0.7}
+                    >
+                      <Ionicons name="ellipsis-vertical" size={20} color="#FFFFFF" />
+                    </TouchableOpacity>
+                  </>
+                )}
+              </View>
+            </>
+          )}
         </View>
 
         {/* ------------------------------------------------------------- */}
@@ -457,6 +657,9 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({ room, onBack }) 
               canShowReadReceipt={canShowReadReceipt}
               othersReadAt={effectiveOthersReadAt}
               loading={loading}
+              selectedMessageIds={selectedMessageIds}
+              isSelectionMode={isSelectionMode}
+              onPressMessage={handleMessagePress}
               onLongPressMessage={handleMessageLongPress}
               onSwipeReply={handleSwipeReply}
               onCallPress={handleStartCall}
@@ -555,18 +758,30 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({ room, onBack }) 
         />
       )}
 
-      {/* Özel Mesaj Seçenekleri Modalı (Sistem Alert Yerine) */}
-      <MessageActionsModal
-        visible={!!selectedMessageForAction}
-        message={selectedMessageForAction}
-        isMe={selectedMessageForAction?.senderId === currentUserId}
-        onClose={() => setSelectedMessageForAction(null)}
-        onReply={(msg) => setReplyMessage(msg)}
-        onEdit={(msg) => {
-          setEditingMessage(msg);
-          setInputText(msg.content);
-        }}
-        onDelete={(msgId) => deleteMessage(msgId)}
+      {/* İletme (Forward) Modalı */}
+      <ForwardMessageModal
+        visible={forwardModalVisible}
+        selectedCount={selectedMessages.length}
+        rooms={rooms}
+        currentRoomId={room.id}
+        currentUserId={currentUserId}
+        onClose={() => setForwardModalVisible(false)}
+        onForward={handleExecuteForward}
+      />
+
+      {/* Mesaj Detayları (Info) Modalı */}
+      <MessageInfoModal
+        visible={!!infoModalMessage}
+        message={infoModalMessage}
+        isMe={infoModalMessage?.senderId === currentUserId}
+        isRead={Boolean(
+          canShowReadReceipt &&
+          effectiveOthersReadAt &&
+          infoModalMessage &&
+          new Date(effectiveOthersReadAt).getTime() >= new Date(infoModalMessage.createdAt).getTime(),
+        )}
+        readAt={effectiveOthersReadAt}
+        onClose={() => setInfoModalMessage(null)}
       />
     </SafeAreaView>
   );
@@ -605,10 +820,19 @@ interface CallBubbleProps {
   item: Message;
   isMe: boolean;
   isDirect: boolean;
+  isSelectionMode?: boolean;
   onCallPress: (video?: boolean) => void;
+  onLongPress?: (item: Message) => void;
 }
 
-const CallBubble = memo(function CallBubble({ item, isMe, isDirect, onCallPress }: CallBubbleProps) {
+const CallBubble = memo(function CallBubble({
+  item,
+  isMe,
+  isDirect,
+  isSelectionMode = false,
+  onCallPress,
+  onLongPress,
+}: CallBubbleProps) {
   let callData = { video: false, status: "ended", duration: 0 };
   try {
     if (typeof item.content === "string" && item.content.startsWith("{")) {
@@ -637,7 +861,10 @@ const CallBubble = memo(function CallBubble({ item, isMe, isDirect, onCallPress 
     <View style={styles.callMessageCenterContainer}>
       <TouchableOpacity
         style={styles.callBubblePill}
-        onPress={() => isDirect && onCallPress(video)}
+        onPress={() => !isSelectionMode && isDirect && onCallPress(video)}
+        onLongPress={() => !isSelectionMode && onLongPress?.(item)}
+        delayLongPress={350}
+        disabled={isSelectionMode}
         activeOpacity={0.8}
       >
         <Ionicons
@@ -660,7 +887,7 @@ const SystemBubble = memo(function SystemBubble({ content }: SystemBubbleProps) 
   let iconName: keyof typeof Ionicons.glyphMap = "information-circle-outline";
   let iconColor = "#94A3B8";
 
-  const lower = content.toLowerCase();
+  const lower = (content || "").toLowerCase();
   if (lower.includes("oluşturdu")) {
     iconName = "people-outline";
     iconColor = "#60A5FA";
@@ -689,30 +916,45 @@ interface SwipeableMessageProps {
   children: React.ReactNode;
   onSwipeReply: () => void;
   isMe: boolean;
+  disabled?: boolean;
 }
 
 const SwipeableMessage = memo(function SwipeableMessage({
   children,
   onSwipeReply,
+  isMe,
+  disabled = false,
 }: SwipeableMessageProps) {
   const translateX = useRef(new Animated.Value(0)).current;
 
   const panResponder = useMemo(
     () =>
       PanResponder.create({
+        onStartShouldSetPanResponder: () => false,
+        onStartShouldSetPanResponderCapture: () => false,
+        onMoveShouldSetPanResponderCapture: (_, gestureState) => {
+          if (disabled) return false;
+          // Sağa doğru belirgin yatay kaydırma yapıldığında dokunmayı yakala
+          return gestureState.dx > 8 && Math.abs(gestureState.dx) > Math.abs(gestureState.dy) * 1.2;
+        },
         onMoveShouldSetPanResponder: (_, gestureState) => {
-          // Yalnızca sola belirgin yatay kaydırma yapıldığında yakala
-          return gestureState.dx < -10 && Math.abs(gestureState.dx) > Math.abs(gestureState.dy) * 1.3;
+          if (disabled) return false;
+          return gestureState.dx > 8 && Math.abs(gestureState.dx) > Math.abs(gestureState.dy) * 1.2;
+        },
+        onPanResponderGrant: () => {
+          translateX.stopAnimation();
         },
         onPanResponderMove: (_, gestureState) => {
-          if (gestureState.dx < 0) {
-            // Sola doğru dirençli (rubberband) hareket: en fazla -65px
-            const val = Math.max(gestureState.dx, -65);
+          if (gestureState.dx > 0) {
+            // Sağa doğru dirençli hareket: en fazla 72px
+            const val = Math.min(gestureState.dx, 72);
             translateX.setValue(val);
+          } else {
+            translateX.setValue(0);
           }
         },
         onPanResponderRelease: (_, gestureState) => {
-          if (gestureState.dx <= -36) {
+          if (gestureState.dx >= 35) {
             onSwipeReply();
           }
           Animated.spring(translateX, {
@@ -730,43 +972,45 @@ const SwipeableMessage = memo(function SwipeableMessage({
             useNativeDriver: true,
           }).start();
         },
+        onPanResponderTerminationRequest: () => false,
       }),
-    [onSwipeReply, translateX],
+    [onSwipeReply, translateX, disabled],
   );
 
   const iconOpacity = translateX.interpolate({
-    inputRange: [-45, -15, 0],
-    outputRange: [1, 0.4, 0],
+    inputRange: [0, 15, 35],
+    outputRange: [0, 0.4, 1],
     extrapolate: "clamp",
   });
 
   const iconScale = translateX.interpolate({
-    inputRange: [-45, -15, 0],
-    outputRange: [1, 0.7, 0.3],
+    inputRange: [0, 15, 35],
+    outputRange: [0.3, 0.7, 1],
     extrapolate: "clamp",
   });
 
   return (
-    <View style={styles.swipeableRowContainer} {...panResponder.panHandlers}>
-      {/* Sağ tarafta beliren Telegram tarzı Yanıtla Rozeti */}
-      <Animated.View
-        style={[
-          styles.replyIconWrapper,
-          {
-            opacity: iconOpacity,
-            transform: [{ scale: iconScale }],
-          },
-        ]}
-      >
-        <View style={styles.replyIconCircle}>
-          <Ionicons name="arrow-undo" size={15} color="#FFFFFF" />
-        </View>
-      </Animated.View>
+    <View style={styles.swipeableRowContainer} {...(disabled ? {} : panResponder.panHandlers)}>
+      {/* Sol tarafta beliren WhatsApp tarzı Yanıtla Rozeti */}
+      {!disabled && (
+        <Animated.View
+          pointerEvents="none"
+          style={[
+            styles.replyIconWrapper,
+            {
+              opacity: iconOpacity,
+              transform: [{ scale: iconScale }],
+            },
+          ]}
+        >
+          <View style={styles.replyIconCircle}>
+            <Ionicons name="arrow-undo" size={15} color="#FFFFFF" />
+          </View>
+        </Animated.View>
+      )}
 
       {/* Kaydırılan Baloncuk */}
-      <Animated.View style={{ transform: [{ translateX }] }}>
-        {children}
-      </Animated.View>
+      <Animated.View style={{ transform: [{ translateX }], width: "100%" }}>{children}</Animated.View>
     </View>
   );
 });
@@ -777,8 +1021,10 @@ interface TextBubbleProps {
   isDirect: boolean;
   showSenderName: boolean;
   status: ChronoRingStatus;
-  onLongPress: (item: Message) => void;
+  isSelected?: boolean;
+  isSelectionMode?: boolean;
   onSwipeReply: (item: Message) => void;
+  onLongPress: (item: Message) => void;
 }
 
 const TextBubble = memo(function TextBubble({
@@ -787,25 +1033,34 @@ const TextBubble = memo(function TextBubble({
   isDirect,
   showSenderName,
   status,
-  onLongPress,
+  isSelected = false,
+  isSelectionMode = false,
   onSwipeReply,
+  onLongPress,
 }: TextBubbleProps) {
   const isDeleted = !!item.deletedAt;
-  const contentText = isDeleted ? "🚫 Bu mesaj silindi" : item.content;
-  const handleLongPress = useCallback(() => onLongPress(item), [onLongPress, item]);
+  const contentText = isDeleted ? "Bu mesaj silindi" : item.content || (item.ciphertext ? "🔒 Şifreli mesaj" : "");
   const handleSwipeReply = useCallback(() => onSwipeReply(item), [onSwipeReply, item]);
+  const handleLongPress = useCallback(() => onLongPress(item), [onLongPress, item]);
 
   // Tek satırda zaman + chrono ring ile yan yana sığabilir mi?
-  const canBeInline = !item.replyTo && !isDeleted && !item.content.includes("\n") && item.content.trim().length <= 14;
+  const canBeInline =
+    !item.replyTo && !isDeleted && !!contentText && !contentText.includes("\n") && contentText.trim().length <= 14;
 
   return (
-    <SwipeableMessage onSwipeReply={handleSwipeReply} isMe={isMe}>
+    <SwipeableMessage onSwipeReply={handleSwipeReply} isMe={isMe} disabled={isSelectionMode}>
       <TouchableOpacity
-        style={[styles.messageBubbleContainer, isMe ? styles.myMessageContainer : styles.otherMessageContainer]}
+        activeOpacity={0.92}
         onLongPress={handleLongPress}
-        activeOpacity={0.88}
+        delayLongPress={350}
+        disabled={isSelectionMode}
+        style={[
+          styles.messageBubbleContainer,
+          isMe ? styles.myMessageContainer : styles.otherMessageContainer,
+          isSelected && styles.selectedBubbleContainer,
+        ]}
       >
-        <View style={[styles.bubble, isMe ? styles.myBubble : styles.otherBubble]}>
+        <View style={[styles.bubble, isMe ? styles.myBubble : styles.otherBubble, isSelected && styles.selectedBubble]}>
           {showSenderName && (
             <Text style={styles.senderName}>{item.sender?.displayName || item.sender?.username || "Kullanıcı"}</Text>
           )}
@@ -875,6 +1130,9 @@ interface MessageFeedProps {
   canShowReadReceipt: boolean;
   othersReadAt?: string | null;
   loading: boolean;
+  selectedMessageIds: Set<string>;
+  isSelectionMode: boolean;
+  onPressMessage: (item: Message) => void;
   onLongPressMessage: (item: Message) => void;
   onSwipeReply: (item: Message) => void;
   onCallPress: (video?: boolean) => void;
@@ -889,6 +1147,9 @@ const MessageFeed = memo(function MessageFeed({
   canShowReadReceipt,
   othersReadAt,
   loading,
+  selectedMessageIds,
+  isSelectionMode,
+  onPressMessage,
   onLongPressMessage,
   onSwipeReply,
   onCallPress,
@@ -898,11 +1159,62 @@ const MessageFeed = memo(function MessageFeed({
     [currentUserId, currentUserName, currentUserAvatar],
   );
 
-  const renderMessage = useCallback((props: any) => {
-    const { key, ...restProps } = props;
-    const messageKey = key || props.currentMessage?._id || `msg-${Math.random()}`;
-    return <GiftedChatMessage key={messageKey} {...restProps} />;
-  }, []);
+  const renderMessage = useCallback(
+    (props: any) => {
+      const { key, ...restProps } = props;
+      const currentMsg = props.currentMessage as (IMessage & { raw?: Message }) | undefined;
+      const item = currentMsg?.raw;
+      const isSelected = !!item && selectedMessageIds.has(item.id);
+      const messageKey = key || props.currentMessage?._id || `msg-${Math.random()}`;
+
+      if (props.currentMessage?.system || item?.type === "SYSTEM") {
+        return <GiftedChatMessage key={messageKey} {...restProps} renderAvatar={null} showUserAvatar={false} />;
+      }
+
+      if (isSelectionMode) {
+        return (
+          <TouchableOpacity
+            key={messageKey}
+            activeOpacity={0.75}
+            onPress={() => {
+              if (item) {
+                onPressMessage(item);
+              }
+            }}
+            style={styles.messageRowTouchable}
+          >
+            {isSelected && <View pointerEvents="none" style={styles.messageSelectionHighlight} />}
+            <View pointerEvents="none">
+              <GiftedChatMessage
+                {...restProps}
+                renderAvatar={null}
+                showUserAvatar={false}
+                containerStyle={{
+                  left: styles.giftedRowReset,
+                  right: styles.giftedRowReset,
+                }}
+              />
+            </View>
+          </TouchableOpacity>
+        );
+      }
+
+      return (
+        <View key={messageKey} style={styles.messageRowTouchable}>
+          <GiftedChatMessage
+            {...restProps}
+            renderAvatar={null}
+            showUserAvatar={false}
+            containerStyle={{
+              left: styles.giftedRowReset,
+              right: styles.giftedRowReset,
+            }}
+          />
+        </View>
+      );
+    },
+    [selectedMessageIds, isSelectionMode, onPressMessage],
+  );
 
   const renderDay = useCallback((dayProps: any) => {
     const currentMsg = dayProps.currentMessage;
@@ -935,7 +1247,16 @@ const MessageFeed = memo(function MessageFeed({
       }
 
       if (item.type === "CALL") {
-        return <CallBubble item={item} isMe={isMe} isDirect={isDirect} onCallPress={onCallPress} />;
+        return (
+          <CallBubble
+            item={item}
+            isMe={isMe}
+            isDirect={isDirect}
+            isSelectionMode={isSelectionMode}
+            onCallPress={onCallPress}
+            onLongPress={onLongPressMessage}
+          />
+        );
       }
 
       const previousMsg = bubbleProps.previousMessage as (IMessage & { raw?: Message }) | undefined;
@@ -953,6 +1274,7 @@ const MessageFeed = memo(function MessageFeed({
         canShowReadReceipt && othersReadAt && new Date(othersReadAt).getTime() >= new Date(item.createdAt).getTime(),
       );
       const ringStatus: ChronoRingStatus = isPending ? "pending" : isRead ? "read" : "sent";
+      const isSelected = selectedMessageIds.has(item.id);
 
       return (
         <TextBubble
@@ -961,12 +1283,24 @@ const MessageFeed = memo(function MessageFeed({
           isDirect={isDirect}
           showSenderName={showSenderName}
           status={ringStatus}
-          onLongPress={onLongPressMessage}
+          isSelected={isSelected}
+          isSelectionMode={isSelectionMode}
           onSwipeReply={onSwipeReply}
+          onLongPress={onLongPressMessage}
         />
       );
     },
-    [currentUserId, isDirect, canShowReadReceipt, othersReadAt, onLongPressMessage, onSwipeReply, onCallPress],
+    [
+      currentUserId,
+      isDirect,
+      canShowReadReceipt,
+      othersReadAt,
+      selectedMessageIds,
+      isSelectionMode,
+      onSwipeReply,
+      onLongPressMessage,
+      onCallPress,
+    ],
   );
 
   return (
@@ -974,6 +1308,8 @@ const MessageFeed = memo(function MessageFeed({
       <GiftedChat
         messages={messages}
         user={user}
+        extraData={selectedMessageIds}
+        shouldUpdateMessage={() => true}
         loadEarlier={false}
         isLoadingEarlier={loading}
         onLoadEarlier={noop}
@@ -981,7 +1317,9 @@ const MessageFeed = memo(function MessageFeed({
         renderMessage={renderMessage}
         renderBubble={renderBubble}
         renderDay={renderDay}
-        renderAvatar={() => null}
+        renderAvatar={null}
+        showUserAvatar={false}
+        showAvatarForEveryMessage={false}
         renderChatEmpty={renderChatEmpty}
         renderInputToolbar={renderNoInputToolbar}
         minInputToolbarHeight={0}
@@ -1007,7 +1345,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     paddingHorizontal: 8,
-    paddingVertical: 10,
+    height: 58,
     backgroundColor: "#0B0F1A",
     borderBottomWidth: 1,
     borderBottomColor: "rgba(255, 255, 255, 0.05)",
@@ -1083,7 +1421,9 @@ const styles = StyleSheet.create({
   },
   replyIconWrapper: {
     position: "absolute",
-    right: 14,
+    left: 14,
+    top: 0,
+    bottom: 0,
     zIndex: 0,
     justifyContent: "center",
     alignItems: "center",
@@ -1136,6 +1476,39 @@ const styles = StyleSheet.create({
     borderBottomRightRadius: 18,
     borderWidth: 1,
     borderColor: "rgba(255, 255, 255, 0.05)",
+  },
+  messageRowTouchable: {
+    alignSelf: "stretch",
+    marginHorizontal: -12,
+    paddingHorizontal: 12,
+    paddingVertical: 1,
+    position: "relative",
+  },
+  messageSelectionHighlight: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    top: 0,
+    bottom: 0,
+    backgroundColor: "rgba(37, 99, 235, 0.18)",
+    zIndex: 0,
+  },
+  giftedRowReset: {
+    marginLeft: 0,
+    marginRight: 0,
+    marginBottom: 2,
+  },
+  selectedBubbleContainer: {},
+  selectedBubble: {},
+  selectionTitleContainer: {
+    flex: 1,
+    justifyContent: "center",
+    marginLeft: 6,
+  },
+  selectionCountText: {
+    color: "#FFFFFF",
+    fontSize: 18,
+    fontWeight: "700",
   },
   senderName: {
     color: "#38BDF8",

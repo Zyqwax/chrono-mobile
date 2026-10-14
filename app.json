@@ -19,7 +19,12 @@
       "infoPlist": {
         "NSMicrophoneUsageDescription": "Chrono, sesli ve görüntülü görüşmeler için mikrofonunuza erişim gerektirir.",
         "NSCameraUsageDescription": "Chrono, görüntülü görüşmeler için kameranıza erişim gerektirir.",
-        "UIBackgroundModes": ["audio", "voip"]
+        "UIBackgroundModes": [
+          "audio",
+          "voip",
+          "audio",
+          "voip"
+        ]
       }
     },
     "android": {
@@ -56,14 +61,39 @@
         "android.permission.BIND_TELECOM_CONNECTION_SERVICE",
         "android.permission.READ_PHONE_NUMBERS",
         "android.permission.CALL_PHONE",
-        "android.permission.USE_FULL_SCREEN_INTENT"
+        "android.permission.USE_FULL_SCREEN_INTENT",
+        "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK",
+        "FOREGROUND_SERVICE",
+        "FOREGROUND_SERVICE_MICROPHONE",
+        "FOREGROUND_SERVICE_PHONE_CALL",
+        "RECORD_AUDIO",
+        "WAKE_LOCK",
+        "POST_NOTIFICATIONS",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.CAMERA",
+        "android.permission.MODIFY_AUDIO_SETTINGS",
+        "android.permission.BLUETOOTH",
+        "android.permission.BLUETOOTH_CONNECT",
+        "android.permission.MANAGE_OWN_CALLS",
+        "android.permission.READ_PHONE_STATE",
+        "android.permission.FOREGROUND_SERVICE",
+        "android.permission.FOREGROUND_SERVICE_MICROPHONE",
+        "android.permission.FOREGROUND_SERVICE_PHONE_CALL",
+        "android.permission.WAKE_LOCK",
+        "android.permission.VIBRATE",
+        "android.permission.POST_NOTIFICATIONS",
+        "android.permission.BIND_TELECOM_CONNECTION_SERVICE",
+        "android.permission.READ_PHONE_NUMBERS",
+        "android.permission.CALL_PHONE",
+        "android.permission.USE_FULL_SCREEN_INTENT",
+        "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"
       ]
     },
     "web": {
       "favicon": "./assets/favicon.png"
     },
     "updates": {
-      "url": "https://u.expo.dev/293cda25-728d-4ab4-b77f-df2db668e2f1"
+      "url": "https://u.expo.dev/6cce0529-7a23-43ce-be0f-d4990f2f03cc"
     },
     "runtimeVersion": {
       "policy": "appVersion"
@@ -75,7 +105,9 @@
       [
         "@config-plugins/react-native-callkeep",
         {
-          "additionalPermissions": ["RECORD_AUDIO"]
+          "additionalPermissions": [
+            "RECORD_AUDIO"
+          ]
         }
       ],
       [
@@ -83,14 +115,19 @@
         {
           "icon": "./assets/notification-icon.png",
           "color": "#38BDF8",
-          "sounds": ["./assets/sounds/ringtone.wav"]
+          "sounds": [
+            "./assets/sounds/ringtone.wav"
+          ]
         }
       ],
       [
         "./plugins/withNotifee.js",
         {
           "android": {
-            "foregroundServiceTypes": ["microphone", "phoneCall"]
+            "foregroundServiceTypes": [
+              "microphone",
+              "phoneCall"
+            ]
           }
         }
       ],
@@ -100,9 +137,9 @@
     "extra": {
       "router": {},
       "eas": {
-        "projectId": "293cda25-728d-4ab4-b77f-df2db668e2f1"
+        "projectId": "6cce0529-7a23-43ce-be0f-d4990f2f03cc"
       }
     },
-    "owner": "enessamed"
+    "owner": "panapple"
   }
 }

@@ -15,8 +15,8 @@ nacl.setPRNG((x, n) => {
   }
 });
 
-const SECURE_STORE_PRIVATE_KEY = '@chrono_e2ee_private_key';
-const SECURE_STORE_PUBLIC_KEY = '@chrono_e2ee_public_key';
+const SECURE_STORE_PRIVATE_KEY = 'chrono_e2ee_private_key';
+const SECURE_STORE_PUBLIC_KEY = 'chrono_e2ee_public_key';
 
 export interface KeyBackupPayload {
   publicKey: string;

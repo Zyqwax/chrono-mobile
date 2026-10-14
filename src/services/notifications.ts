@@ -111,7 +111,7 @@ export async function registerForPushNotificationsAsync(): Promise<string | null
     Constants?.expoConfig?.extra?.eas?.projectId ??
     Constants?.easConfig?.projectId ??
     (Constants as any)?.manifest2?.extra?.eas?.projectId ??
-    '293cda25-728d-4ab4-b77f-df2db668e2f1';
+    '6cce0529-7a23-43ce-be0f-d4990f2f03cc';
 
   try {
     const tokenData = await Notifications.getExpoPushTokenAsync(
@@ -214,6 +214,33 @@ class NotificationService {
       this.isConfigured = true;
     } catch (err) {
       console.warn('NotificationService init hatası:', err);
+    }
+  }
+
+  /**
+   * Yeni sohbet mesajı bildirimi (Uygulama açıkken/arka plandayken gelen soket mesajları için anlık bildirim)
+   */
+  async showMessageNotification(senderName: string, body: string, roomId: string) {
+    try {
+      const activeRoomId = useChatStore?.getState?.()?.activeRoom?.id;
+      if (activeRoomId === roomId) return;
+
+      const settings = useChatStore?.getState?.()?.settings;
+      const shouldPlaySound = settings?.inAppSounds ?? true;
+
+      await Notifications.scheduleNotificationAsync({
+        identifier: `msg_${roomId}_${Date.now()}`,
+        content: {
+          title: senderName,
+          body: body || 'Yeni bir mesajınız var',
+          data: { roomId, type: 'message' },
+          sound: shouldPlaySound ? 'default' : undefined,
+          priority: Notifications.AndroidNotificationPriority.HIGH,
+        },
+        trigger: null,
+      });
+    } catch (err) {
+      console.warn('showMessageNotification hatası:', err);
     }
   }
 

@@ -105,6 +105,7 @@ const AuthInputCard: React.FC<AuthInputCardProps> = ({
           {label}
         </Text>
         <TextInput
+          key={isPassword ? (showPassword ? 'pass-vis' : 'pass-sec') : 'plain-field'}
           ref={inputRef}
           style={styles.textInputField}
           value={value}
@@ -114,7 +115,9 @@ const AuthInputCard: React.FC<AuthInputCardProps> = ({
           autoCapitalize={autoCapitalize}
           autoCorrect={autoCorrect}
           keyboardType={keyboardType}
-          secureTextEntry={isPassword && !showPassword}
+          secureTextEntry={isPassword ? !showPassword : false}
+          textContentType={isPassword ? (keyboardType === 'number-pad' ? 'oneTimeCode' : 'password') : 'none'}
+          autoComplete={isPassword ? 'password' : 'off'}
           onFocus={() => setIsFocused(true)}
           onBlur={() => setIsFocused(false)}
           onSubmitEditing={onSubmitEditing}
@@ -443,6 +446,7 @@ export const AuthScreen: React.FC = () => {
             </Text>
 
             <AuthInputCard
+              key="stage-check-username"
               label="Kullanıcı adı"
               value={username}
               onChangeText={(t) => {
@@ -494,6 +498,7 @@ export const AuthScreen: React.FC = () => {
             </Text>
 
             <AuthInputCard
+              key="stage-register-name"
               label="Görünen ad"
               value={displayName}
               onChangeText={(t) => {
@@ -526,6 +531,7 @@ export const AuthScreen: React.FC = () => {
             </Text>
 
             <AuthInputCard
+              key="stage-register-email"
               label="E-posta"
               value={email}
               onChangeText={(t) => {
@@ -561,6 +567,7 @@ export const AuthScreen: React.FC = () => {
             </Text>
 
             <AuthInputCard
+              key="stage-register-password"
               label="Şifre"
               value={password}
               onChangeText={(t) => {
@@ -619,6 +626,7 @@ export const AuthScreen: React.FC = () => {
             </Text>
 
             <AuthInputCard
+              key="stage-register-pin"
               label="6 Haneli Güvenlik PIN'i"
               value={securityPin}
               onChangeText={(t) => {
@@ -707,6 +715,7 @@ export const AuthScreen: React.FC = () => {
             </Text>
 
             <AuthInputCard
+              key="stage-enter-password"
               label="Şifre"
               value={password}
               onChangeText={(t) => {
@@ -792,6 +801,7 @@ export const AuthScreen: React.FC = () => {
             </Text>
 
             <AuthInputCard
+              key="stage-enter-recovery-pin"
               label="6 Haneli Güvenlik PIN'i"
               value={securityPin}
               onChangeText={(t) => {

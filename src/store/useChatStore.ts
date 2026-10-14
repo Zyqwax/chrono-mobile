@@ -368,6 +368,14 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         if (activeRoom && message.roomId === activeRoom.id) {
           // Açık odadaysak hemen okundu bildir
           get().markAsRead(activeRoom.id);
+        } else {
+          // Kullanıcı bu odada değilse (ana sayfada, başka bir odada veya uygulama açıkken) anlık bildirim göster
+          const isMine = message.senderId === get().currentUser?.id;
+          if (!isMine) {
+            const senderName = message.sender?.displayName || message.sender?.username || 'Chrono';
+            const body = message.content || (message.ciphertext ? '🔒 Yeni bir mesaj' : 'Yeni bir mesajınız var');
+            notificationService.showMessageNotification(senderName, body, message.roomId);
+          }
         }
 
         // Sohbet listesindeki son mesaj ve okunmamış sayısını güncelle
@@ -948,7 +956,28 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     set({ isRoomsLoading: true });
     try {
       const res = await api.get('/rooms');
-      const rooms: Room[] = res.data;
+      const rawRooms: Room[] = res.data;
+      const currentUserId = get().currentUser?.id;
+
+      // Her odanın son mesajı şifreliyse arka planda çöz ve yerel db'ye de kaydet
+      const rooms: Room[] = await Promise.all(
+        rawRooms.map(async (r) => {
+          if (!r.lastMessage) return r;
+          if (!r.lastMessage.ciphertext && r.lastMessage.content) return r;
+
+          const peerPubKey = getRoomPeerPublicKey(r, currentUserId);
+          const decryptedLast = await decryptMessageIfNeeded(
+            r.lastMessage,
+            currentUserId,
+            peerPubKey,
+          );
+          if (decryptedLast.content) {
+            void localDb.saveMessage(decryptedLast);
+          }
+          return { ...r, lastMessage: decryptedLast };
+        }),
+      );
+
       set((state) => {
         const updatedRoomMessages = { ...state.roomMessages };
         for (const r of rooms) {
@@ -978,7 +1007,23 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     if (!get().token) return null;
     try {
       const res = await api.get(`/rooms/${roomId}`);
-      const room: Room = res.data;
+      const rawRoom: Room = res.data;
+      const currentUserId = get().currentUser?.id;
+
+      let room = rawRoom;
+      if (rawRoom.lastMessage && (rawRoom.lastMessage.ciphertext || !rawRoom.lastMessage.content)) {
+        const peerPubKey = getRoomPeerPublicKey(rawRoom, currentUserId);
+        const decryptedLast = await decryptMessageIfNeeded(
+          rawRoom.lastMessage,
+          currentUserId,
+          peerPubKey,
+        );
+        if (decryptedLast.content) {
+          void localDb.saveMessage(decryptedLast);
+        }
+        room = { ...rawRoom, lastMessage: decryptedLast };
+      }
+
       set((state) => {
         const exists = state.rooms.some((r) => r.id === room.id);
         const updatedRooms = exists
@@ -1275,12 +1320,18 @@ export const useChatStore = create<ChatStore>((set, get) => ({
             (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
           );
           const shouldUpdateActive = !state.activeRoom || state.activeRoom.id === roomId;
+          const latest = initialMerged[0];
           return {
             roomMessages: {
               ...state.roomMessages,
               [roomId]: initialMerged,
             },
             ...(shouldUpdateActive ? { messages: initialMerged } : {}),
+            rooms: state.rooms.map((r) =>
+              r.id === roomId && latest && !r.lastMessage?.content
+                ? { ...r, lastMessage: latest, lastMessageAt: latest.createdAt }
+                : r,
+            ),
           };
         });
 
@@ -1310,9 +1361,15 @@ export const useChatStore = create<ChatStore>((set, get) => ({
                 (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
               );
               const shouldUpdateActive = !state.activeRoom || state.activeRoom.id === roomId;
+              const deltaLatest = merged[0];
               return {
                 roomMessages: { ...state.roomMessages, [roomId]: merged },
                 ...(shouldUpdateActive ? { messages: merged } : {}),
+                rooms: state.rooms.map((r) =>
+                  r.id === roomId && deltaLatest
+                    ? { ...r, lastMessage: deltaLatest, lastMessageAt: deltaLatest.createdAt }
+                    : r,
+                ),
               };
             });
           }
@@ -1349,6 +1406,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
         );
         const shouldUpdateActive = !state.activeRoom || state.activeRoom.id === roomId;
+        const newLatest = mergedRoomMessages[0];
 
         return {
           roomMessages: {
@@ -1356,6 +1414,11 @@ export const useChatStore = create<ChatStore>((set, get) => ({
             [roomId]: mergedRoomMessages,
           },
           ...(shouldUpdateActive ? { messages: mergedRoomMessages } : {}),
+          rooms: state.rooms.map((r) =>
+            r.id === roomId && newLatest
+              ? { ...r, lastMessage: newLatest, lastMessageAt: newLatest.createdAt }
+              : r,
+          ),
         };
       });
       return true;
