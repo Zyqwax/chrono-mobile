@@ -47,19 +47,25 @@ class MediaCacheService {
         // Alt dizinleri oluştur
         const imagesDir = this.getImagesDir();
         const voiceDir = this.getVoiceDir();
+        const stickersDir = this.getStickersDir();
+        const myStickersDir = this.getMyStickersDir();
 
         await FileSystem.makeDirectoryAsync(imagesDir, { intermediates: true });
         await FileSystem.makeDirectoryAsync(voiceDir, { intermediates: true });
+        await FileSystem.makeDirectoryAsync(stickersDir, { intermediates: true });
+        await FileSystem.makeDirectoryAsync(myStickersDir, { intermediates: true });
 
-        // Ses kayıtlarının müzik çalar gibi genel uygulamaları kirletmemesi için .nomedia ekle
-        try {
-          const noMediaVoice = `${voiceDir}/.nomedia`;
-          const noMediaInfo = await FileSystem.getInfoAsync(noMediaVoice);
-          if (!noMediaInfo.exists) {
-            await FileSystem.writeAsStringAsync(noMediaVoice, '');
+        // Ses kayıtlarının ve çıkartmaların galeri/müzik çalar uygulamalarını kirletmemesi için .nomedia ekle
+        for (const dir of [voiceDir, stickersDir, myStickersDir]) {
+          try {
+            const noMediaPath = `${dir}/.nomedia`;
+            const noMediaInfo = await FileSystem.getInfoAsync(noMediaPath);
+            if (!noMediaInfo.exists) {
+              await FileSystem.writeAsStringAsync(noMediaPath, '');
+            }
+          } catch {
+            // yut
           }
-        } catch {
-          // yut
         }
 
         this.isInitialized = true;
@@ -82,17 +88,37 @@ class MediaCacheService {
     return `${this.baseDir}/Chrono Voice`;
   }
 
+  private getStickersDir(): string {
+    return `${this.baseDir}/Chrono Stickers`;
+  }
+
+  private getMyStickersDir(): string {
+    return `${this.baseDir}/Chrono Stickers/MyPack`;
+  }
+
+  private getFolderForType(type: 'IMAGE' | 'AUDIO' | 'STICKER'): string {
+    if (type === 'STICKER') return this.getStickersDir();
+    if (type === 'IMAGE') return this.getImagesDir();
+    return this.getVoiceDir();
+  }
+
+  private getDefaultExtension(type: 'IMAGE' | 'AUDIO' | 'STICKER'): string {
+    if (type === 'STICKER') return '.webp';
+    if (type === 'IMAGE') return '.jpg';
+    return '.m4a';
+  }
+
   /**
    * Uzaktaki URL'den temiz, güvenli ve benzersiz bir dosya adı üretir.
    */
-  getFileNameFromUrl(url: string, type: 'IMAGE' | 'AUDIO'): string {
+  getFileNameFromUrl(url: string, type: 'IMAGE' | 'AUDIO' | 'STICKER'): string {
+    const ext = this.getDefaultExtension(type);
     try {
       const cleanUrl = url.split('?')[0];
       const segments = cleanUrl.split('/');
       let rawName = segments[segments.length - 1] || '';
 
       // Eğer dosya adında uzantı yoksa uygun uzantıyı ekle
-      const ext = type === 'IMAGE' ? '.jpg' : '.m4a';
       if (!rawName.includes('.')) {
         rawName += ext;
       }
@@ -100,16 +126,16 @@ class MediaCacheService {
       const safeName = rawName.replace(/[^a-zA-Z0-9._-]/g, '_');
       return safeName.length > 0 ? safeName : `${type.toLowerCase()}_${Date.now()}${ext}`;
     } catch {
-      return `${type.toLowerCase()}_${Date.now()}.${type === 'IMAGE' ? 'jpg' : 'm4a'}`;
+      return `${type.toLowerCase()}_${Date.now()}${ext}`;
     }
   }
 
   /**
    * Verilen URL için yerel hedef dosya yolunu döner.
    */
-  getTargetLocalPath(url: string, type: 'IMAGE' | 'AUDIO'): string {
+  getTargetLocalPath(url: string, type: 'IMAGE' | 'AUDIO' | 'STICKER'): string {
     const fileName = this.getFileNameFromUrl(url, type);
-    const folder = type === 'IMAGE' ? this.getImagesDir() : this.getVoiceDir();
+    const folder = this.getFolderForType(type);
     return `${folder}/${fileName}`;
   }
 
@@ -117,7 +143,7 @@ class MediaCacheService {
    * Dosya yerel depolamada zaten önbelleğe alınmış mı kontrol eder.
    * Varsa yerel `file://...` yolunu, yoksa `null` döner.
    */
-  async getLocalUriIfCached(url: string, type: 'IMAGE' | 'AUDIO'): Promise<string | null> {
+  async getLocalUriIfCached(url: string, type: 'IMAGE' | 'AUDIO' | 'STICKER'): Promise<string | null> {
     if (!url) return null;
     if (url.startsWith('file://')) return url;
 
@@ -141,7 +167,7 @@ class MediaCacheService {
    */
   async ensureLocalMedia(
     url: string,
-    type: 'IMAGE' | 'AUDIO',
+    type: 'IMAGE' | 'AUDIO' | 'STICKER',
     onDownloaded?: (localUri: string) => void,
   ): Promise<string> {
     if (!url) return url;
@@ -191,17 +217,17 @@ class MediaCacheService {
   }
 
   /**
-   * Kullanıcının çektiği fotoğrafı veya kaydettiği sesi kalıcı Chrono klasörüne kopyalar.
+   * Kullanıcının çektiği fotoğrafı, oluşturduğu çıkartmayı veya kaydettiği sesi kalıcı Chrono klasörüne kopyalar.
    * Bu sayede kullanıcı kendi gönderdiği medyayı anında cihazdan offline oynatabilir.
    */
-  async saveOutgoingMedia(tempUri: string, type: 'IMAGE' | 'AUDIO'): Promise<string> {
+  async saveOutgoingMedia(tempUri: string, type: 'IMAGE' | 'AUDIO' | 'STICKER'): Promise<string> {
     await this.init();
     try {
-      const ext = type === 'IMAGE' ? '.jpg' : '.m4a';
+      const ext = this.getDefaultExtension(type);
       const timestamp = Date.now();
       const randomStr = Math.random().toString(36).substring(2, 8);
       const fileName = `chrono_${type.toLowerCase()}_${timestamp}_${randomStr}${ext}`;
-      const folder = type === 'IMAGE' ? this.getImagesDir() : this.getVoiceDir();
+      const folder = this.getFolderForType(type);
       const destination = `${folder}/${fileName}`;
 
       await FileSystem.copyAsync({
@@ -214,6 +240,64 @@ class MediaCacheService {
     } catch (err) {
       console.warn('⚠️ [MediaCache] Giden medya kopyalama hatası, geçici URI korunuyor:', err);
       return tempUri;
+    }
+  }
+
+  /**
+   * Kullanıcının uygulama içinde ürettiği veya sohbetten kaydettiği çıkartmayı
+   * kişisel çıkartma paketine (Chrono Stickers/MyPack) kaydeder.
+   */
+  async saveCustomSticker(sourceUri: string): Promise<string> {
+    await this.init();
+    const myDir = this.getMyStickersDir();
+    const timestamp = Date.now();
+    const randomStr = Math.random().toString(36).substring(2, 7);
+    const destination = `${myDir}/sticker_${timestamp}_${randomStr}.png`;
+
+    try {
+      if (sourceUri.startsWith('http://') || sourceUri.startsWith('https://')) {
+        const res = await FileSystem.downloadAsync(sourceUri, destination);
+        return res.uri;
+      } else {
+        await FileSystem.copyAsync({
+          from: sourceUri,
+          to: destination,
+        });
+        return destination;
+      }
+    } catch (err) {
+      console.warn('⚠️ [MediaCache] Özel çıkartma kaydedilemedi:', err);
+      return sourceUri;
+    }
+  }
+
+  /**
+   * Kullanıcının kişisel çıkartma paketindeki (MyPack) tüm çıkartmaları en yeniden eskiye listeler.
+   */
+  async getSavedStickers(): Promise<string[]> {
+    await this.init();
+    const myDir = this.getMyStickersDir();
+    try {
+      const files = await FileSystem.readDirectoryAsync(myDir);
+      return files
+        .filter((f) => !f.startsWith('.') && (f.endsWith('.png') || f.endsWith('.webp') || f.endsWith('.jpg')))
+        .sort()
+        .reverse()
+        .map((f) => `${myDir}/${f}`);
+    } catch (err) {
+      console.warn('⚠️ [MediaCache] Kayıtlı çıkartmalar okunamadı:', err);
+      return [];
+    }
+  }
+
+  /**
+   * Kullanıcının kişisel çıkartma paketinden bir çıkartmayı siler.
+   */
+  async deleteSavedSticker(uri: string): Promise<void> {
+    try {
+      await FileSystem.deleteAsync(uri, { idempotent: true });
+    } catch (err) {
+      console.warn('⚠️ [MediaCache] Çıkartma silinemedi:', err);
     }
   }
 }

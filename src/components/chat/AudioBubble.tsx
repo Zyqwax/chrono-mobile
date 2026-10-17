@@ -8,20 +8,24 @@ import {
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useAudioPlayer, useAudioPlayerStatus } from "expo-audio";
-import { Message } from "../../types";
+import { Message, MessageReaction } from "../../types";
 import { ChronoProgressRing, ChronoRingStatus } from "../ChronoProgressRing";
 import { mediaCacheService } from "../../services/mediaCacheService";
 import { localDb } from "../../services/localDb";
 import { useChatStore } from "../../store/useChatStore";
+import { ReactionPills } from "./ReactionPills";
 
 interface AudioBubbleProps {
   item: Message;
   isMe: boolean;
+  currentUserId?: string;
   showSenderName?: boolean;
   status: ChronoRingStatus;
   isSelected?: boolean;
   isSelectionMode?: boolean;
   onLongPress: (item: Message) => void;
+  onToggleReaction?: (messageId: string, emoji: string) => void;
+  onOpenReactionDetail?: (messageId: string, reactions: MessageReaction[]) => void;
 }
 
 function formatDuration(seconds: number): string {
@@ -59,11 +63,14 @@ function generateWaveformHeights(seedStr: string, count = 26): number[] {
 export const AudioBubble = memo(function AudioBubble({
   item,
   isMe,
+  currentUserId,
   showSenderName,
   status,
   isSelected = false,
   isSelectionMode = false,
   onLongPress,
+  onToggleReaction,
+  onOpenReactionDetail,
 }: AudioBubbleProps) {
   const isDeleted = !!item.deletedAt;
   const [cachedUri, setCachedUri] = useState<string | null>(item.localUri || null);
@@ -246,6 +253,14 @@ export const AudioBubble = memo(function AudioBubble({
           </View>
         </View>
       </TouchableOpacity>
+
+      <ReactionPills
+        reactions={item.reactions}
+        currentUserId={currentUserId}
+        isMe={isMe}
+        onToggleReaction={(emoji) => onToggleReaction?.(item.id, emoji)}
+        onOpenDetail={(reactions) => onOpenReactionDetail?.(item.id, reactions)}
+      />
     </View>
   );
 });

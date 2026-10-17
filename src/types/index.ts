@@ -57,7 +57,21 @@ export interface RoomMember {
   user: User;
 }
 
-export type MessageType = 'TEXT' | 'IMAGE' | 'AUDIO' | 'SYSTEM' | 'CALL';
+export type MessageType = 'TEXT' | 'IMAGE' | 'AUDIO' | 'STICKER' | 'SYSTEM' | 'CALL';
+
+export interface MessageReaction {
+  id: string;
+  messageId: string;
+  userId: string;
+  emoji: string;
+  createdAt: string;
+  user?: {
+    id: string;
+    username: string;
+    displayName: string;
+    avatarUrl?: string | null;
+  };
+}
 
 export interface MessageReply {
   id: string;
@@ -86,6 +100,7 @@ export interface Message {
   type?: MessageType;
   replyToId?: string | null;
   replyTo?: MessageReply | null;
+  reactions?: MessageReaction[];
   editedAt?: string | null;
   deletedAt?: string | null;
   createdAt: string;

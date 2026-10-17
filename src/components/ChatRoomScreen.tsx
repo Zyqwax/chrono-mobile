@@ -22,7 +22,7 @@ import {
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { GiftedChat, IMessage, Message as GiftedChatMessage } from "react-native-gifted-chat";
-import { Message, Room } from "../types";
+import { Message, MessageReaction, Room } from "../types";
 import { useChatStore } from "../store/useChatStore";
 import { notificationService } from "../services/notifications";
 import { RoomInfoModal } from "./RoomInfoModal";
@@ -46,8 +46,14 @@ import {
 } from "expo-audio";
 import { ImageBubble } from "./chat/ImageBubble";
 import { AudioBubble } from "./chat/AudioBubble";
+import { StickerBubble } from "./chat/StickerBubble";
 import { AttachmentSheet } from "./chat/AttachmentSheet";
 import { ImagePreviewModal } from "./chat/ImagePreviewModal";
+import { StickerKeyboardDrawer } from "./chat/StickerKeyboardDrawer";
+import { StickerCreatorModal } from "./chat/StickerCreatorModal";
+import { ReactionPickerBar } from "./chat/ReactionPickerBar";
+import { ReactionPills } from "./chat/ReactionPills";
+import { ReactionDetailModal } from "./chat/ReactionDetailModal";
 
 const CHAT_BACKGROUND = require("../../assets/chrono-chat-background.png");
 const EMPTY_MESSAGES: Message[] = [];
@@ -90,17 +96,32 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({ room, onBack }) 
   const [forwardModalVisible, setForwardModalVisible] = useState(false);
   const [infoModalMessage, setInfoModalMessage] = useState<Message | null>(null);
 
+  // Çıkartma (Sticker) & Tepki (Reaction) state'leri
+  const [stickerDrawerVisible, setStickerDrawerVisible] = useState(false);
+  const [stickerCreatorVisible, setStickerCreatorVisible] = useState(false);
+  const [isUploadingSticker, setIsUploadingSticker] = useState(false);
+  const [stickerRefreshCount, setStickerRefreshCount] = useState(0);
+  const [reactionDetailState, setReactionDetailState] = useState<{
+    messageId: string;
+    reactions: MessageReaction[];
+  } | null>(null);
+
   const handleSwipeReply = useCallback((item: Message) => {
     if (item.deletedAt) return;
     setReplyMessage(item);
+    setStickerDrawerVisible(false);
     setTimeout(() => {
       textInputRef.current?.focus();
     }, 60);
   }, []);
 
-  // Donanım geri tuşuna basıldığında mesaj seçimi, yanıtlama veya düzenleme modundan çık
+  // Donanım geri tuşuna basıldığında çıkartma çekmecesi, mesaj seçimi, yanıtlama veya düzenleme modundan çık
   useEffect(() => {
     const sub = BackHandler.addEventListener("hardwareBackPress", () => {
+      if (stickerDrawerVisible) {
+        setStickerDrawerVisible(false);
+        return true;
+      }
       if (selectedMessages.length > 0) {
         setSelectedMessages([]);
         return true;
@@ -117,7 +138,7 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({ room, onBack }) 
       return false;
     });
     return () => sub.remove();
-  }, [selectedMessages.length, replyMessage, editingMessage]);
+  }, [stickerDrawerVisible, selectedMessages.length, replyMessage, editingMessage]);
 
   // Sığ (shallow) seçici: yalnızca bu ekranın kullandığı aksiyonlar ve profil değişince render olur
   const {
@@ -126,6 +147,7 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({ room, onBack }) 
     currentUserAvatar,
     fetchMessages,
     sendMessage,
+    reactToMessage,
     editMessage,
     deleteMessage,
     markAsRead,
@@ -144,6 +166,7 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({ room, onBack }) 
       currentUserAvatar: s.currentUser?.avatarUrl,
       fetchMessages: s.fetchMessages,
       sendMessage: s.sendMessage,
+      reactToMessage: s.reactToMessage,
       editMessage: s.editMessage,
       deleteMessage: s.deleteMessage,
       markAsRead: s.markAsRead,
@@ -484,20 +507,21 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({ room, onBack }) 
     }
   };
 
-  const handleSendImage = async (caption?: string) => {
-    if (!previewImageUri) return;
+  const handleSendImage = async (finalUri: string, caption?: string) => {
+    const targetUri = finalUri || previewImageUri;
+    if (!targetUri) return;
     setIsUploadingImage(true);
     try {
       // 1. Görseli hemen kalıcı yerel Chrono klasörüne (Android/media/com.zyqwax.chrono/Chrono/Chrono Images) kaydet
-      const savedLocalUri = await mediaCacheService.saveOutgoingMedia(previewImageUri, "IMAGE");
+      const savedLocalUri = await mediaCacheService.saveOutgoingMedia(targetUri, "IMAGE");
 
       const formData = new FormData();
-      const filename = previewImageUri.split("/").pop() || `photo_${Date.now()}.jpg`;
+      const filename = targetUri.split("/").pop() || `photo_${Date.now()}.jpg`;
       const match = /\.(\w+)$/.exec(filename);
       const type = match ? `image/${match[1]}` : "image/jpeg";
 
       formData.append("file", {
-        uri: savedLocalUri || previewImageUri,
+        uri: savedLocalUri || targetUri,
         name: filename,
         type,
       } as any);
@@ -523,6 +547,102 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({ room, onBack }) 
     setPreviewImageUri(imageUrl);
     setPreviewMode("viewer");
   }, []);
+
+  const handleToggleStickerDrawer = useCallback(() => {
+    setStickerDrawerVisible((prev) => {
+      const next = !prev;
+      if (next) {
+        Keyboard.dismiss();
+      } else {
+        setTimeout(() => {
+          textInputRef.current?.focus();
+        }, 80);
+      }
+      return next;
+    });
+  }, []);
+
+  const handleInsertEmoji = useCallback(
+    (emoji: string) => {
+      handleInputChange(inputText + emoji);
+    },
+    [inputText, handleInputChange],
+  );
+
+  const handleBackspaceEmoji = useCallback(() => {
+    if (!inputText) return;
+    const chars = Array.from(inputText);
+    chars.pop();
+    handleInputChange(chars.join(""));
+  }, [inputText, handleInputChange]);
+
+  const handleSendSticker = useCallback(
+    async (uriOrUrl: string) => {
+      if (!uriOrUrl || isUploadingSticker) return;
+      setIsUploadingSticker(true);
+      try {
+        const replyId = replyMessage && !replyMessage.deletedAt ? replyMessage.id : undefined;
+
+        // 1. Uzak bir hazır çıkartma URL'si ise önce yerel Chrono Stickers klasörüne önbellekle ve direkt gönder
+        if (uriOrUrl.startsWith("http://") || uriOrUrl.startsWith("https://")) {
+          const cachedLocal = await mediaCacheService.ensureLocalMedia(uriOrUrl, "STICKER");
+          await sendMessage(room.id, uriOrUrl, replyId, "STICKER", cachedLocal);
+          setReplyMessage(null);
+          return;
+        }
+
+        // 2. Yerel dosya (file://) ise kalıcı Chrono Stickers dizinine kaydet ve Cloudinary'e yükle
+        const savedLocalUri = await mediaCacheService.saveOutgoingMedia(uriOrUrl, "STICKER");
+        const formData = new FormData();
+        const filename = `sticker_${Date.now()}.png`;
+        formData.append("file", {
+          uri: savedLocalUri || uriOrUrl,
+          name: filename,
+          type: "image/png",
+        } as any);
+
+        const res = await uploadMedia(formData, "STICKER");
+        if (res?.url) {
+          await sendMessage(room.id, res.url, replyId, "STICKER", savedLocalUri);
+          setReplyMessage(null);
+        }
+      } catch (err: any) {
+        console.warn("Çıkartma gönderme hatası:", err?.message || err);
+        Alert.alert("Hata", "Çıkartma gönderilemedi.");
+      } finally {
+        setIsUploadingSticker(false);
+      }
+    },
+    [isUploadingSticker, replyMessage, room.id, sendMessage, uploadMedia],
+  );
+
+  const handleStickerCreated = useCallback(
+    async (savedLocalUri: string, sendImmediately: boolean) => {
+      setStickerCreatorVisible(false);
+      setStickerRefreshCount((c) => c + 1);
+      if (sendImmediately) {
+        await handleSendSticker(savedLocalUri);
+      }
+    },
+    [handleSendSticker],
+  );
+
+  const handleToggleReaction = useCallback(
+    (messageId: string, emoji: string) => {
+      if (!messageId || !emoji) return;
+      void reactToMessage(room.id, messageId, emoji);
+      setSelectedMessages([]);
+    },
+    [reactToMessage, room.id],
+  );
+
+  const handleOpenReactionDetail = useCallback(
+    (messageId: string, reactions: MessageReaction[]) => {
+      if (!reactions || reactions.length === 0) return;
+      setReactionDetailState({ messageId, reactions });
+    },
+    [],
+  );
 
   const isSelectionMode = selectedMessages.length > 0;
   const selectedMessageIds = useMemo(() => new Set(selectedMessages.map((m) => m.id)), [selectedMessages]);
@@ -592,7 +712,7 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({ room, onBack }) 
 
       for (const msg of messagesToForward) {
         if (msg.content) {
-          await sendMessage(targetRoom.id, msg.content);
+          await sendMessage(targetRoom.id, msg.content, undefined, msg.type || "TEXT", msg.localUri || undefined);
         }
       }
       const targetName =
@@ -894,9 +1014,21 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({ room, onBack }) 
               onSwipeReply={handleSwipeReply}
               onCallPress={handleStartCall}
               onPressImage={handleViewImageFullscreen}
+              onToggleReaction={handleToggleReaction}
+              onOpenReactionDetail={handleOpenReactionDetail}
             />
           )}
         </ImageBackground>
+
+        {/* Tek bir mesaj basılı tutulduğunda (uzun basma) WhatsApp/Telegram tarzı Hızlı Tepki Çubuğu */}
+        {selectedMessages.length === 1 && !selectedMessages[0].deletedAt && (
+          <ReactionPickerBar
+            selectedEmoji={
+              selectedMessages[0].reactions?.find((r) => r.userId === currentUserId)?.emoji || null
+            }
+            onSelectEmoji={(emoji) => handleToggleReaction(selectedMessages[0].id, emoji)}
+          />
+        )}
 
         {/* Yanıtlama veya Düzenleme Banner'ı */}
         {(replyMessage || editingMessage) && (
@@ -916,7 +1048,13 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({ room, onBack }) 
                   ? editingMessage.content
                   : replyMessage?.deletedAt
                     ? "Bu mesaj silindi"
-                    : replyMessage?.content || "Mesaj"}
+                    : replyMessage?.type === "STICKER"
+                      ? "💟 Çıkartma"
+                      : replyMessage?.type === "IMAGE"
+                        ? "📷 Fotoğraf"
+                        : replyMessage?.type === "AUDIO"
+                          ? "🎤 Sesli mesaj"
+                          : replyMessage?.content || "Mesaj"}
               </Text>
             </View>
             <TouchableOpacity
@@ -935,7 +1073,12 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({ room, onBack }) 
         {/* ------------------------------------------------------------- */}
         {/* Bottom Input Bar                                              */}
         {/* ------------------------------------------------------------- */}
-        <View style={[styles.inputContainer, { paddingBottom: Math.max(insets.bottom, 8) }]}>
+        <View
+          style={[
+            styles.inputContainer,
+            { paddingBottom: stickerDrawerVisible ? 8 : Math.max(insets.bottom, 8) },
+          ]}
+        >
           {isRecording ? (
             <View style={styles.recordingContainer}>
               <View style={styles.recordingLeft}>
@@ -967,8 +1110,16 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({ room, onBack }) 
           ) : (
             <>
               <View style={styles.inputBox}>
-                <TouchableOpacity style={styles.inputInnerBtn} activeOpacity={0.7}>
-                  <Ionicons name="happy-outline" size={24} color="#8A93A8" />
+                <TouchableOpacity
+                  style={styles.inputInnerBtn}
+                  onPress={handleToggleStickerDrawer}
+                  activeOpacity={0.7}
+                >
+                  <Ionicons
+                    name={stickerDrawerVisible ? "keypad-outline" : "happy-outline"}
+                    size={24}
+                    color={stickerDrawerVisible ? "#38BDF8" : "#8A93A8"}
+                  />
                 </TouchableOpacity>
 
                 <TextInput
@@ -978,6 +1129,11 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({ room, onBack }) 
                   placeholderTextColor="#64748B"
                   value={inputText}
                   onChangeText={handleInputChange}
+                  onFocus={() => {
+                    if (stickerDrawerVisible) {
+                      setStickerDrawerVisible(false);
+                    }
+                  }}
                   multiline
                 />
 
@@ -1006,6 +1162,17 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({ room, onBack }) 
             </>
           )}
         </View>
+
+        {/* WhatsApp Tarzı Çıkartma & Emoji Çekmecesi */}
+        <StickerKeyboardDrawer
+          visible={stickerDrawerVisible}
+          isUploadingSticker={isUploadingSticker}
+          onSelectEmoji={handleInsertEmoji}
+          onBackspaceEmoji={handleBackspaceEmoji}
+          onSendSticker={handleSendSticker}
+          onOpenCreator={() => setStickerCreatorVisible(true)}
+          refreshTrigger={stickerRefreshCount}
+        />
       </KeyboardAvoidingView>
 
       {/* Modals */}
@@ -1077,6 +1244,26 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({ room, onBack }) 
         )}
         readAt={effectiveOthersReadAt}
         onClose={() => setInfoModalMessage(null)}
+      />
+
+      {/* Çıkartma Üretici Stüdyo Modalı */}
+      <StickerCreatorModal
+        visible={stickerCreatorVisible}
+        onClose={() => setStickerCreatorVisible(false)}
+        onStickerCreated={handleStickerCreated}
+      />
+
+      {/* Mesaj Tepki Detayları Modalı */}
+      <ReactionDetailModal
+        visible={!!reactionDetailState}
+        reactions={reactionDetailState?.reactions || null}
+        currentUserId={currentUserId}
+        onClose={() => setReactionDetailState(null)}
+        onRemoveMyReaction={(emoji) => {
+          if (reactionDetailState?.messageId) {
+            handleToggleReaction(reactionDetailState.messageId, emoji);
+          }
+        }}
       />
     </SafeAreaView>
   );
@@ -1313,6 +1500,7 @@ const SwipeableMessage = memo(function SwipeableMessage({
 interface TextBubbleProps {
   item: Message;
   isMe: boolean;
+  currentUserId?: string;
   isDirect: boolean;
   showSenderName: boolean;
   status: ChronoRingStatus;
@@ -1320,11 +1508,14 @@ interface TextBubbleProps {
   isSelectionMode?: boolean;
   onSwipeReply: (item: Message) => void;
   onLongPress: (item: Message) => void;
+  onToggleReaction?: (messageId: string, emoji: string) => void;
+  onOpenReactionDetail?: (messageId: string, reactions: MessageReaction[]) => void;
 }
 
 const TextBubble = memo(function TextBubble({
   item,
   isMe,
+  currentUserId,
   isDirect,
   showSenderName,
   status,
@@ -1332,6 +1523,8 @@ const TextBubble = memo(function TextBubble({
   isSelectionMode = false,
   onSwipeReply,
   onLongPress,
+  onToggleReaction,
+  onOpenReactionDetail,
 }: TextBubbleProps) {
   const isDeleted = !!item.deletedAt;
   const contentText = isDeleted ? "Bu mesaj silindi" : item.content || (item.ciphertext ? "🔒 Şifreli mesaj" : "");
@@ -1344,80 +1537,101 @@ const TextBubble = memo(function TextBubble({
 
   return (
     <SwipeableMessage onSwipeReply={handleSwipeReply} isMe={isMe} disabled={isSelectionMode || isDeleted}>
-      <TouchableOpacity
-        activeOpacity={isDeleted ? 1 : 0.92}
-        onLongPress={isDeleted ? undefined : handleLongPress}
-        delayLongPress={350}
-        disabled={isSelectionMode || isDeleted}
+      <View
         style={[
           styles.messageBubbleContainer,
           isMe ? styles.myMessageContainer : styles.otherMessageContainer,
           isSelected && styles.selectedBubbleContainer,
         ]}
       >
-        <View style={[styles.bubble, isMe ? styles.myBubble : styles.otherBubble, isSelected && styles.selectedBubble]}>
-          {showSenderName && (
-            <Text style={styles.senderName}>{item.sender?.displayName || item.sender?.username || "Kullanıcı"}</Text>
-          )}
+        <TouchableOpacity
+          activeOpacity={isDeleted ? 1 : 0.92}
+          onLongPress={isDeleted ? undefined : handleLongPress}
+          delayLongPress={350}
+          disabled={isSelectionMode || isDeleted}
+        >
+          <View style={[styles.bubble, isMe ? styles.myBubble : styles.otherBubble, isSelected && styles.selectedBubble]}>
+            {showSenderName && (
+              <Text style={styles.senderName}>{item.sender?.displayName || item.sender?.username || "Kullanıcı"}</Text>
+            )}
 
-          {item.replyTo && (
-            <View style={styles.replyPreviewInBubble}>
-              <Text style={styles.replySenderInBubble}>{item.replyTo.sender?.displayName || "Kullanıcı"}</Text>
-              <Text
-                style={[
-                  styles.replyTextInBubble,
-                  (item.replyTo.deletedAt || !item.replyTo.content) && styles.deletedReplyTextInBubble,
-                ]}
-                numberOfLines={1}
-              >
-                {item.replyTo.deletedAt || !item.replyTo.content ? "Bu mesaj silindi" : item.replyTo.content}
-              </Text>
-            </View>
-          )}
+            {item.replyTo && (
+              <View style={styles.replyPreviewInBubble}>
+                <Text style={styles.replySenderInBubble}>{item.replyTo.sender?.displayName || "Kullanıcı"}</Text>
+                <Text
+                  style={[
+                    styles.replyTextInBubble,
+                    (item.replyTo.deletedAt || !item.replyTo.content) && styles.deletedReplyTextInBubble,
+                  ]}
+                  numberOfLines={1}
+                >
+                  {item.replyTo.deletedAt
+                    ? "Bu mesaj silindi"
+                    : item.replyTo.type === "STICKER"
+                      ? "💟 Çıkartma"
+                      : item.replyTo.type === "IMAGE"
+                        ? "📷 Fotoğraf"
+                        : item.replyTo.type === "AUDIO"
+                          ? "🎤 Sesli mesaj"
+                          : item.replyTo.content || "Bu mesaj silindi"}
+                </Text>
+              </View>
+            )}
 
-          {canBeInline ? (
-            <View style={styles.inlineBubbleRow}>
-              <Text style={[styles.messageContent, isMe ? styles.myMessageContent : styles.otherMessageContent]}>
-                {contentText}
-              </Text>
-              <View style={styles.inlineMetaRow}>
-                {item.editedAt && <Text style={styles.editedTag}>düzenlendi </Text>}
-                <Text style={[styles.timeText, isMe ? styles.myTimeText : styles.otherTimeText]}>
-                  {formatTime(item.createdAt)}
+            {canBeInline ? (
+              <View style={styles.inlineBubbleRow}>
+                <Text style={[styles.messageContent, isMe ? styles.myMessageContent : styles.otherMessageContent]}>
+                  {contentText}
                 </Text>
-                {isMe && (
-                  <View style={styles.ringWrapper}>
-                    <ChronoProgressRing status={status} size={11} />
-                  </View>
-                )}
+                <View style={styles.inlineMetaRow}>
+                  {item.editedAt && <Text style={styles.editedTag}>düzenlendi </Text>}
+                  <Text style={[styles.timeText, isMe ? styles.myTimeText : styles.otherTimeText]}>
+                    {formatTime(item.createdAt)}
+                  </Text>
+                  {isMe && (
+                    <View style={styles.ringWrapper}>
+                      <ChronoProgressRing status={status} size={11} />
+                    </View>
+                  )}
+                </View>
               </View>
-            </View>
-          ) : (
-            <View style={styles.stackedBubbleCol}>
-              <Text
-                style={[
-                  styles.messageContent,
-                  isMe ? styles.myMessageContent : styles.otherMessageContent,
-                  isDeleted && styles.deletedMessageText,
-                ]}
-              >
-                {contentText}
-              </Text>
-              <View style={styles.stackedMetaRow}>
-                {item.editedAt && !isDeleted && <Text style={styles.editedTag}>düzenlendi </Text>}
-                <Text style={[styles.timeText, isMe ? styles.myTimeText : styles.otherTimeText]}>
-                  {formatTime(item.createdAt)}
+            ) : (
+              <View style={styles.stackedBubbleCol}>
+                <Text
+                  style={[
+                    styles.messageContent,
+                    isMe ? styles.myMessageContent : styles.otherMessageContent,
+                    isDeleted && styles.deletedMessageText,
+                  ]}
+                >
+                  {contentText}
                 </Text>
-                {isMe && !isDeleted && (
-                  <View style={styles.ringWrapper}>
-                    <ChronoProgressRing status={status} size={11} />
-                  </View>
-                )}
+                <View style={styles.stackedMetaRow}>
+                  {item.editedAt && !isDeleted && <Text style={styles.editedTag}>düzenlendi </Text>}
+                  <Text style={[styles.timeText, isMe ? styles.myTimeText : styles.otherTimeText]}>
+                    {formatTime(item.createdAt)}
+                  </Text>
+                  {isMe && !isDeleted && (
+                    <View style={styles.ringWrapper}>
+                      <ChronoProgressRing status={status} size={11} />
+                    </View>
+                  )}
+                </View>
               </View>
-            </View>
-          )}
-        </View>
-      </TouchableOpacity>
+            )}
+          </View>
+        </TouchableOpacity>
+
+        {!isDeleted && (
+          <ReactionPills
+            reactions={item.reactions}
+            currentUserId={currentUserId}
+            isMe={isMe}
+            onToggleReaction={(emoji) => onToggleReaction?.(item.id, emoji)}
+            onOpenDetail={(reactions) => onOpenReactionDetail?.(item.id, reactions)}
+          />
+        )}
+      </View>
     </SwipeableMessage>
   );
 });
@@ -1438,6 +1652,8 @@ interface MessageFeedProps {
   onSwipeReply: (item: Message) => void;
   onCallPress: (video?: boolean) => void;
   onPressImage: (imageUrl: string) => void;
+  onToggleReaction: (messageId: string, emoji: string) => void;
+  onOpenReactionDetail: (messageId: string, reactions: MessageReaction[]) => void;
 }
 
 const MessageFeed = memo(function MessageFeed({
@@ -1456,6 +1672,8 @@ const MessageFeed = memo(function MessageFeed({
   onSwipeReply,
   onCallPress,
   onPressImage,
+  onToggleReaction,
+  onOpenReactionDetail,
 }: MessageFeedProps) {
   const user = useMemo(
     () => ({ _id: currentUserId, name: currentUserName, avatar: currentUserAvatar }),
@@ -1581,17 +1799,38 @@ const MessageFeed = memo(function MessageFeed({
       const ringStatus: ChronoRingStatus = isPending ? "pending" : isRead ? "read" : "sent";
       const isSelected = selectedMessageIds.has(item.id);
 
+      if (item.type === "STICKER") {
+        return (
+          <StickerBubble
+            item={item}
+            isMe={isMe}
+            currentUserId={currentUserId}
+            showSenderName={showSenderName}
+            status={ringStatus}
+            isSelected={isSelected}
+            isSelectionMode={isSelectionMode}
+            onPressSticker={onPressImage}
+            onLongPress={onLongPressMessage}
+            onToggleReaction={onToggleReaction}
+            onOpenReactionDetail={onOpenReactionDetail}
+          />
+        );
+      }
+
       if (item.type === "IMAGE") {
         return (
           <ImageBubble
             item={item}
             isMe={isMe}
+            currentUserId={currentUserId}
             showSenderName={showSenderName}
             status={ringStatus}
             isSelected={isSelected}
             isSelectionMode={isSelectionMode}
             onPressImage={onPressImage}
             onLongPress={onLongPressMessage}
+            onToggleReaction={onToggleReaction}
+            onOpenReactionDetail={onOpenReactionDetail}
           />
         );
       }
@@ -1601,11 +1840,14 @@ const MessageFeed = memo(function MessageFeed({
           <AudioBubble
             item={item}
             isMe={isMe}
+            currentUserId={currentUserId}
             showSenderName={showSenderName}
             status={ringStatus}
             isSelected={isSelected}
             isSelectionMode={isSelectionMode}
             onLongPress={onLongPressMessage}
+            onToggleReaction={onToggleReaction}
+            onOpenReactionDetail={onOpenReactionDetail}
           />
         );
       }
@@ -1614,6 +1856,7 @@ const MessageFeed = memo(function MessageFeed({
         <TextBubble
           item={item}
           isMe={isMe}
+          currentUserId={currentUserId}
           isDirect={isDirect}
           showSenderName={showSenderName}
           status={ringStatus}
@@ -1621,6 +1864,8 @@ const MessageFeed = memo(function MessageFeed({
           isSelectionMode={isSelectionMode}
           onSwipeReply={onSwipeReply}
           onLongPress={onLongPressMessage}
+          onToggleReaction={onToggleReaction}
+          onOpenReactionDetail={onOpenReactionDetail}
         />
       );
     },
@@ -1635,6 +1880,8 @@ const MessageFeed = memo(function MessageFeed({
       onLongPressMessage,
       onCallPress,
       onPressImage,
+      onToggleReaction,
+      onOpenReactionDetail,
     ],
   );
 

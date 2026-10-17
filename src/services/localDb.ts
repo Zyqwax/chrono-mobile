@@ -1,5 +1,5 @@
 import * as SQLite from 'expo-sqlite';
-import { Message, MessageReply, User } from '../types';
+import { Message, MessageReaction, MessageReply, User } from '../types';
 
 interface MessageRow {
   id: string;
@@ -11,6 +11,7 @@ interface MessageRow {
   createdTimestamp: number;
   replyToId: string | null;
   replyTo: string | null;
+  reactions: string | null;
   sender: string;
   editedAt: string | null;
   deletedAt: string | null;
@@ -40,6 +41,7 @@ class LocalDatabase {
               createdTimestamp INTEGER NOT NULL,
               replyToId TEXT,
               replyTo TEXT,
+              reactions TEXT,
               sender TEXT NOT NULL,
               editedAt TEXT,
               deletedAt TEXT,
@@ -54,9 +56,14 @@ class LocalDatabase {
             ON messages(createdTimestamp DESC);
           `);
 
-          // Eski SQLite veritabanları için localUri kolonunu ekle (migrasyon)
+          // Eski SQLite veritabanları için localUri ve reactions kolonlarını ekle (migrasyon)
           try {
             await db.execAsync('ALTER TABLE messages ADD COLUMN localUri TEXT;');
+          } catch {
+            // Kolon zaten varsa yut
+          }
+          try {
+            await db.execAsync('ALTER TABLE messages ADD COLUMN reactions TEXT;');
           } catch {
             // Kolon zaten varsa yut
           }
@@ -96,6 +103,16 @@ class LocalDatabase {
       // yut
     }
 
+    let parsedReactions: MessageReaction[] = [];
+    try {
+      if (row.reactions) {
+        const arr = JSON.parse(row.reactions);
+        if (Array.isArray(arr)) parsedReactions = arr;
+      }
+    } catch {
+      // yut
+    }
+
     return {
       id: row.id,
       roomId: row.roomId,
@@ -105,6 +122,7 @@ class LocalDatabase {
       createdAt: row.createdAt,
       replyToId: row.replyToId,
       replyTo: parsedReplyTo,
+      reactions: parsedReactions,
       sender: parsedSender,
       editedAt: row.editedAt,
       deletedAt: row.deletedAt,
@@ -171,12 +189,13 @@ class LocalDatabase {
       const createdTimestamp = new Date(message.createdAt).getTime() || Date.now();
       const senderJson = JSON.stringify(message.sender || {});
       const replyToJson = message.replyTo ? JSON.stringify(message.replyTo) : null;
+      const reactionsJson = message.reactions ? JSON.stringify(message.reactions) : null;
 
       await db.runAsync(
         `INSERT OR REPLACE INTO messages (
           id, roomId, senderId, content, type, createdAt, createdTimestamp,
-          replyToId, replyTo, sender, editedAt, deletedAt, isPending, localUri
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+          replyToId, replyTo, reactions, sender, editedAt, deletedAt, isPending, localUri
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
         [
           message.id,
           message.roomId,
@@ -187,6 +206,7 @@ class LocalDatabase {
           createdTimestamp,
           message.replyToId || null,
           replyToJson,
+          reactionsJson,
           senderJson,
           message.editedAt || null,
           message.deletedAt || null,
@@ -214,12 +234,15 @@ class LocalDatabase {
           const replyToJson = message.replyTo
             ? JSON.stringify(message.replyTo)
             : null;
+          const reactionsJson = message.reactions
+            ? JSON.stringify(message.reactions)
+            : null;
 
           await db.runAsync(
             `INSERT OR REPLACE INTO messages (
               id, roomId, senderId, content, type, createdAt, createdTimestamp,
-              replyToId, replyTo, sender, editedAt, deletedAt, isPending, localUri
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+              replyToId, replyTo, reactions, sender, editedAt, deletedAt, isPending, localUri
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
             [
               message.id,
               message.roomId,
@@ -230,6 +253,7 @@ class LocalDatabase {
               createdTimestamp,
               message.replyToId || null,
               replyToJson,
+              reactionsJson,
               senderJson,
               message.editedAt || null,
               message.deletedAt || null,
@@ -241,6 +265,25 @@ class LocalDatabase {
       });
     } catch (error) {
       console.warn('LocalDb saveMessages toplu kayıt hatası:', error);
+    }
+  }
+
+  /**
+   * Mesaj tepkilerini (reactions) yerel SQLite üzerinde günceller.
+   */
+  async updateMessageReactions(
+    messageId: string,
+    reactions: MessageReaction[],
+  ): Promise<void> {
+    try {
+      const db = await this.getDb();
+      const reactionsJson = JSON.stringify(reactions || []);
+      await db.runAsync(
+        'UPDATE messages SET reactions = ? WHERE id = ?;',
+        [reactionsJson, messageId],
+      );
+    } catch (error) {
+      console.warn('LocalDb updateMessageReactions hatası:', error);
     }
   }
 

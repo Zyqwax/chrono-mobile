@@ -929,11 +929,13 @@ const RoomItem = memo(function RoomItem({
                   ? 'Bu mesaj silindi'
                   : isCall
                     ? formatCallPreview(lastMsg.content, isMine)
-                    : lastMsg?.type === 'IMAGE'
-                      ? '📷 Fotoğraf'
-                      : lastMsg?.type === 'AUDIO'
-                        ? '🎤 Sesli mesaj'
-                        : lastMsg?.content || (lastMsg?.ciphertext ? '🔒 Şifreli mesaj' : '')}
+                    : lastMsg?.type === 'STICKER'
+                      ? '💟 Çıkartma'
+                      : lastMsg?.type === 'IMAGE'
+                        ? '📷 Fotoğraf'
+                        : lastMsg?.type === 'AUDIO'
+                          ? '🎤 Sesli mesaj'
+                          : lastMsg?.content || (lastMsg?.ciphertext ? '🔒 Şifreli mesaj' : '')}
               </Text>
             </View>
           )}

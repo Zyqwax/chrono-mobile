@@ -62,6 +62,9 @@ export function formatNotificationMessageText(
   }
 
   const normalizedType = (messageType || 'TEXT').toUpperCase();
+  if (normalizedType === 'STICKER') {
+    return '💟 Çıkartma';
+  }
   if (normalizedType === 'IMAGE') {
     return '📷 Fotoğraf';
   }
@@ -77,6 +80,9 @@ export function formatNotificationMessageText(
   // E2EE çözüldükten sonra içerik bir medya URL'si ise temiz etiket göster
   if (raw.startsWith('http://') || raw.startsWith('https://')) {
     const lower = raw.toLowerCase();
+    if (lower.includes('chat_stickers') || lower.includes('sticker')) {
+      return '💟 Çıkartma';
+    }
     if (
       lower.includes('/image/upload/') ||
       lower.match(/\.(jpg|jpeg|png|webp|gif)(\?|$)/)

@@ -8,21 +8,25 @@ import {
   View,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import { Message } from "../../types";
+import { Message, MessageReaction } from "../../types";
 import { ChronoProgressRing, ChronoRingStatus } from "../ChronoProgressRing";
 import { mediaCacheService } from "../../services/mediaCacheService";
 import { localDb } from "../../services/localDb";
 import { useChatStore } from "../../store/useChatStore";
+import { ReactionPills } from "./ReactionPills";
 
 interface ImageBubbleProps {
   item: Message;
   isMe: boolean;
+  currentUserId?: string;
   showSenderName?: boolean;
   status: ChronoRingStatus;
   isSelected?: boolean;
   isSelectionMode?: boolean;
   onPressImage: (imageUrl: string) => void;
   onLongPress: (item: Message) => void;
+  onToggleReaction?: (messageId: string, emoji: string) => void;
+  onOpenReactionDetail?: (messageId: string, reactions: MessageReaction[]) => void;
 }
 
 function formatTime(isoString: string): string {
@@ -37,12 +41,15 @@ function formatTime(isoString: string): string {
 export const ImageBubble = memo(function ImageBubble({
   item,
   isMe,
+  currentUserId,
   showSenderName,
   status,
   isSelected = false,
   isSelectionMode = false,
   onPressImage,
   onLongPress,
+  onToggleReaction,
+  onOpenReactionDetail,
 }: ImageBubbleProps) {
   const [loading, setLoading] = useState(true);
   const [hasError, setHasError] = useState(false);
@@ -173,6 +180,14 @@ export const ImageBubble = memo(function ImageBubble({
           </View>
         </View>
       </TouchableOpacity>
+
+      <ReactionPills
+        reactions={item.reactions}
+        currentUserId={currentUserId}
+        isMe={isMe}
+        onToggleReaction={(emoji) => onToggleReaction?.(item.id, emoji)}
+        onOpenDetail={(reactions) => onOpenReactionDetail?.(item.id, reactions)}
+      />
     </View>
   );
 });

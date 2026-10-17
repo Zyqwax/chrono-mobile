@@ -5,6 +5,7 @@ import {
   Contact,
   IncomingCall,
   Message,
+  MessageReaction,
   MessageType,
   Room,
   User,
@@ -135,7 +136,10 @@ interface ChatStore {
   uploadTempRoomIcon: (formData: FormData) => Promise<{ iconUrl: string }>;
   uploadRoomIcon: (roomId: string, formData: FormData) => Promise<Room>;
   removeRoomIcon: (roomId: string) => Promise<Room>;
-  uploadMedia: (formData: FormData) => Promise<{
+  uploadMedia: (
+    formData: FormData,
+    typeHint?: 'IMAGE' | 'AUDIO' | 'STICKER',
+  ) => Promise<{
     url: string;
     type: MessageType;
     width?: number;
@@ -161,6 +165,11 @@ interface ChatStore {
     messageId: string,
     localUri: string,
   ) => void;
+  reactToMessage: (
+    roomId: string,
+    messageId: string,
+    emoji: string,
+  ) => Promise<void>;
   editMessage: (messageId: string, content: string) => Promise<void>;
   deleteMessage: (messageId: string) => Promise<void>;
   markAsRead: (roomId: string) => Promise<void>;
@@ -416,8 +425,11 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         // Odaya ait mesaj havuzuna çözülmüş mesajı ekle
         addMessage(message);
 
-        // Gelen fotoğraf veya sesli mesajları arka planda otomatik cihaz deposuna önbellekle
-        if (message.content && (message.type === 'IMAGE' || message.type === 'AUDIO')) {
+        // Gelen fotoğraf, sesli mesaj veya çıkartmaları arka planda otomatik cihaz deposuna önbellekle
+        if (
+          message.content &&
+          (message.type === 'IMAGE' || message.type === 'AUDIO' || message.type === 'STICKER')
+        ) {
           void mediaCacheService.ensureLocalMedia(message.content, message.type, (localUri) => {
             void localDb.updateMessageLocalUri(message.id, localUri);
             get().updateMessageLocalUri(message.roomId, message.id, localUri);
@@ -528,6 +540,35 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           }),
         });
       });
+
+      // 2.1 Mesaj tepkisi (reaction) güncellendiğinde
+      socket.on(
+        'message_reaction',
+        ({
+          roomId,
+          messageId,
+          reactions,
+        }: {
+          roomId: string;
+          messageId: string;
+          reactions: MessageReaction[];
+        }) => {
+          void localDb.updateMessageReactions(messageId, reactions);
+          set((state) => {
+            const currentRoomMsgs = state.roomMessages[roomId] || [];
+            const updateReactions = (m: Message): Message =>
+              m.id === messageId ? { ...m, reactions } : m;
+
+            return {
+              roomMessages: {
+                ...state.roomMessages,
+                [roomId]: currentRoomMsgs.map(updateReactions),
+              },
+              messages: state.messages.map(updateReactions),
+            };
+          });
+        },
+      );
 
       // 3. Oda canlı güncellemesi (room_upsert)
       socket.on('room_upsert', (incomingRoom: Room) => {
@@ -1327,12 +1368,13 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     return data;
   },
 
-  uploadMedia: async (formData) => {
+  uploadMedia: async (formData, typeHint) => {
     const token = await AsyncStorage.getItem(STORAGE_TOKEN_KEY);
+    const query = typeHint ? `?type=${encodeURIComponent(typeHint)}` : '';
 
     return new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest();
-      xhr.open('POST', `${API_BASE_URL}/messages/upload-media`);
+      xhr.open('POST', `${API_BASE_URL}/messages/upload-media${query}`);
       xhr.timeout = 120000;
 
       if (token) {
@@ -1598,6 +1640,96 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         messages: activeMsgs,
       };
     });
+  },
+
+  reactToMessage: async (roomId: string, messageId: string, emoji: string) => {
+    const currentUser = get().currentUser;
+    if (!currentUser || !messageId || !emoji || messageId.startsWith('temp_')) return;
+
+    // 1. Optimistic UI güncellemesi
+    set((state) => {
+      const applyOptimistic = (m: Message): Message => {
+        if (m.id !== messageId) return m;
+        const currentReactions = m.reactions ? [...m.reactions] : [];
+        const existingIdx = currentReactions.findIndex((r) => r.userId === currentUser.id);
+        let nextReactions: MessageReaction[];
+
+        if (existingIdx !== -1 && currentReactions[existingIdx].emoji === emoji) {
+          nextReactions = currentReactions.filter((_, i) => i !== existingIdx);
+        } else if (existingIdx !== -1) {
+          nextReactions = currentReactions.map((r, i) =>
+            i === existingIdx ? { ...r, emoji, createdAt: new Date().toISOString() } : r,
+          );
+        } else {
+          nextReactions = [
+            ...currentReactions,
+            {
+              id: `temp_react_${Date.now()}`,
+              messageId,
+              userId: currentUser.id,
+              emoji,
+              createdAt: new Date().toISOString(),
+              user: {
+                id: currentUser.id,
+                username: currentUser.username,
+                displayName: currentUser.displayName,
+                avatarUrl: currentUser.avatarUrl,
+              },
+            },
+          ];
+        }
+        void localDb.updateMessageReactions(messageId, nextReactions);
+        return { ...m, reactions: nextReactions };
+      };
+
+      const rMsgs = (state.roomMessages[roomId] || []).map(applyOptimistic);
+      const activeMsgs = state.messages.map(applyOptimistic);
+      return {
+        roomMessages: { ...state.roomMessages, [roomId]: rMsgs },
+        messages: activeMsgs,
+      };
+    });
+
+    // 2. Socket veya REST üzerinden sunucuya ilet
+    const socket = getSocket();
+    if (socket && socket.connected) {
+      socket.emit('message_react', { messageId, emoji }, (ack: any) => {
+        if (ack?.ok && Array.isArray(ack.reactions)) {
+          void localDb.updateMessageReactions(messageId, ack.reactions);
+          set((state) => {
+            const updateConfirmed = (m: Message): Message =>
+              m.id === messageId ? { ...m, reactions: ack.reactions } : m;
+            return {
+              roomMessages: {
+                ...state.roomMessages,
+                [roomId]: (state.roomMessages[roomId] || []).map(updateConfirmed),
+              },
+              messages: state.messages.map(updateConfirmed),
+            };
+          });
+        }
+      });
+    } else {
+      try {
+        const res = await api.post(`/messages/${messageId}/reactions`, { emoji });
+        if (res.data?.reactions) {
+          void localDb.updateMessageReactions(messageId, res.data.reactions);
+          set((state) => {
+            const updateConfirmed = (m: Message): Message =>
+              m.id === messageId ? { ...m, reactions: res.data.reactions } : m;
+            return {
+              roomMessages: {
+                ...state.roomMessages,
+                [roomId]: (state.roomMessages[roomId] || []).map(updateConfirmed),
+              },
+              messages: state.messages.map(updateConfirmed),
+            };
+          });
+        }
+      } catch (err) {
+        console.warn('reactToMessage error:', err);
+      }
+    }
   },
 
   sendMessage: async (
