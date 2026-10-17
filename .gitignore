@@ -43,4 +43,3 @@ pnpm-debug.*
 
 # Firebase Admin SDK Private Keys
 *-firebase-adminsdk-*.json
-google-services.json
