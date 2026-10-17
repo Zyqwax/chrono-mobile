@@ -57,13 +57,15 @@ export interface RoomMember {
   user: User;
 }
 
+export type MessageType = 'TEXT' | 'IMAGE' | 'AUDIO' | 'SYSTEM' | 'CALL';
+
 export interface MessageReply {
   id: string;
   content: string;
   ciphertext?: string | null;
   nonce?: string | null;
   senderPublicKey?: string | null;
-  type: 'TEXT' | 'IMAGE' | 'SYSTEM' | 'CALL';
+  type: MessageType;
   deletedAt?: string | null;
   sender: {
     id: string;
@@ -81,7 +83,7 @@ export interface Message {
   ciphertext?: string | null;
   nonce?: string | null;
   senderPublicKey?: string | null;
-  type?: 'TEXT' | 'IMAGE' | 'SYSTEM' | 'CALL';
+  type?: MessageType;
   replyToId?: string | null;
   replyTo?: MessageReply | null;
   editedAt?: string | null;
@@ -89,6 +91,7 @@ export interface Message {
   createdAt: string;
   sender: User;
   isPending?: boolean;
+  localUri?: string | null;
 }
 
 export interface Room {

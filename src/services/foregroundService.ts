@@ -5,9 +5,17 @@ import notifee, {
   Event,
   EventType,
 } from '@notifee/react-native';
-import { useChatStore } from '../store/useChatStore';
 import { callSoundService } from './sound';
 import { callKeepService } from './callkeep';
+
+// Require cycle kırılması için Zustand store referansı dinamik çözümlenir
+const getChatStore = () => {
+  try {
+    return require('../store/useChatStore').useChatStore;
+  } catch {
+    return null;
+  }
+};
 
 export const CALL_FG_CHANNEL_ID = 'ongoing-call-channel';
 export const CALL_NOTIFICATION_ID = 'active_call_notif';
@@ -15,13 +23,18 @@ export const CALL_NOTIFICATION_ID = 'active_call_notif';
 type CallPressListener = () => void;
 const pressListeners = new Set<CallPressListener>();
 
+type RoomPressListener = (roomId: string) => void;
+const roomPressListeners = new Set<RoomPressListener>();
+let pendingNavigationRoomId: string | null = null;
+
 /**
- * Notifee ön plan ve arka plan bildirim olaylarını (Cevapla/Reddet aksiyonları, tıklamalar) tek merkezden yönetir.
+ * Notifee ön plan ve arka plan bildirim olaylarını (Cevapla/Reddet aksiyonları, Okundu işaretleme, tıklamalar) tek merkezden yönetir.
  */
 export async function handleNotifeeEvent({ type, detail }: Event) {
   const { notification, pressAction } = detail;
   const pressActionId = pressAction?.id;
   const data = notification?.data;
+  const roomId = data?.roomId as string | undefined;
   const callId =
     (data?.callId as string) ||
     (notification?.id?.startsWith('call_')
@@ -39,30 +52,32 @@ export async function handleNotifeeEvent({ type, detail }: Event) {
         await notifee.cancelNotification(`call_${callId}`).catch(() => {});
         callKeepService.reportConnectedCall(callId);
 
-        const chatStore = useChatStore.getState();
-        if (!chatStore.activeCall && data) {
-          const isVideo = (data.video as any) === true || String(data.video) === 'true';
-          const currentUser = chatStore.currentUser || {
-            id: '',
-            username: 'Ben',
-            displayName: 'Ben',
-          };
-          chatStore.setActiveCall({
-            callId,
-            roomId: (data.roomId as string) || '',
-            caller: {
+        const chatStore = getChatStore()?.getState();
+        if (chatStore) {
+          if (!chatStore.activeCall && data) {
+            const isVideo = (data.video as any) === true || String(data.video) === 'true';
+            const currentUser = chatStore.currentUser || {
               id: '',
-              username: (data.callerName as string) || 'Kullanıcı',
-              displayName: (data.callerName as string) || 'Kullanıcı',
-            },
-            callee: currentUser,
-            video: isVideo,
-            state: 'ringing',
-            startedAt: Date.now(),
-            mediaRoom: (data.roomId as string) ? `call_${data.roomId}` : `call_${callId}`,
-          });
+              username: 'Ben',
+              displayName: 'Ben',
+            };
+            chatStore.setActiveCall({
+              callId,
+              roomId: (data.roomId as string) || '',
+              caller: {
+                id: '',
+                username: (data.callerName as string) || 'Kullanıcı',
+                displayName: (data.callerName as string) || 'Kullanıcı',
+              },
+              callee: currentUser,
+              video: isVideo,
+              state: 'ringing',
+              startedAt: Date.now(),
+              mediaRoom: (data.roomId as string) ? `call_${data.roomId}` : `call_${callId}`,
+            });
+          }
+          await chatStore.acceptCall(callId);
         }
-        await chatStore.acceptCall(callId);
       }
       // Uygulamayı arama modalına yönlendir
       pressListeners.forEach((listener) => {
@@ -78,11 +93,37 @@ export async function handleNotifeeEvent({ type, detail }: Event) {
           await notifee.cancelNotification(notification.id).catch(() => {});
         }
         await notifee.cancelNotification(`call_${callId}`).catch(() => {});
-        await useChatStore.getState().declineCall(callId);
+        await getChatStore()?.getState()?.declineCall(callId);
       }
+    } else if (pressActionId === 'mark_read' && roomId) {
+      if (notification?.id) {
+        await notifee.cancelNotification(notification.id).catch(() => {});
+      }
+      await notifee.cancelNotification(`chat_${roomId}`).catch(() => {});
+      try {
+        const { notificationService } = require('./notifications');
+        await notificationService.clearRoomNotifications(roomId);
+      } catch {}
+      await getChatStore()?.getState()?.markAsRead(roomId);
     }
   } else if (type === EventType.PRESS) {
-    console.log('📱 [Notifee Event] Bildirime tıklandı (PRESS)');
+    if (data?.type === 'message' && roomId) {
+      try {
+        const { notificationService } = require('./notifications');
+        void notificationService.clearRoomNotifications(roomId);
+      } catch {}
+      if (roomPressListeners.size > 0) {
+        roomPressListeners.forEach((listener) => {
+          try {
+            listener(roomId);
+          } catch {}
+        });
+      } else {
+        pendingNavigationRoomId = roomId;
+      }
+      return;
+    }
+
     pressListeners.forEach((listener) => {
       try {
         listener();
@@ -266,6 +307,25 @@ class ForegroundServiceManager {
     pressListeners.add(callback);
     return () => {
       pressListeners.delete(callback);
+    };
+  }
+
+  /**
+   * Sohbet mesajı bildirimine tıklandığında ilgili odaya yönlendirmek için dinleyici kaydet
+   */
+  onRoomNotificationPress(callback: RoomPressListener) {
+    roomPressListeners.add(callback);
+    if (pendingNavigationRoomId) {
+      const target = pendingNavigationRoomId;
+      pendingNavigationRoomId = null;
+      setTimeout(() => {
+        try {
+          callback(target);
+        } catch {}
+      }, 100);
+    }
+    return () => {
+      roomPressListeners.delete(callback);
     };
   }
 

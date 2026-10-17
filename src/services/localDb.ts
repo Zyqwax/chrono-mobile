@@ -15,6 +15,7 @@ interface MessageRow {
   editedAt: string | null;
   deletedAt: string | null;
   isPending: number;
+  localUri: string | null;
 }
 
 class LocalDatabase {
@@ -42,7 +43,8 @@ class LocalDatabase {
               sender TEXT NOT NULL,
               editedAt TEXT,
               deletedAt TEXT,
-              isPending INTEGER DEFAULT 0
+              isPending INTEGER DEFAULT 0,
+              localUri TEXT
             );
 
             CREATE INDEX IF NOT EXISTS idx_messages_room_ts 
@@ -51,6 +53,14 @@ class LocalDatabase {
             CREATE INDEX IF NOT EXISTS idx_messages_created_ts 
             ON messages(createdTimestamp DESC);
           `);
+
+          // Eski SQLite veritabanları için localUri kolonunu ekle (migrasyon)
+          try {
+            await db.execAsync('ALTER TABLE messages ADD COLUMN localUri TEXT;');
+          } catch {
+            // Kolon zaten varsa yut
+          }
+
           this.isInitialized = true;
         }
         return db;
@@ -99,6 +109,7 @@ class LocalDatabase {
       editedAt: row.editedAt,
       deletedAt: row.deletedAt,
       isPending: Boolean(row.isPending),
+      localUri: row.localUri || null,
     };
   }
 
@@ -164,8 +175,8 @@ class LocalDatabase {
       await db.runAsync(
         `INSERT OR REPLACE INTO messages (
           id, roomId, senderId, content, type, createdAt, createdTimestamp,
-          replyToId, replyTo, sender, editedAt, deletedAt, isPending
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+          replyToId, replyTo, sender, editedAt, deletedAt, isPending, localUri
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
         [
           message.id,
           message.roomId,
@@ -180,6 +191,7 @@ class LocalDatabase {
           message.editedAt || null,
           message.deletedAt || null,
           message.isPending ? 1 : 0,
+          message.localUri || null,
         ],
       );
     } catch (error) {
@@ -206,8 +218,8 @@ class LocalDatabase {
           await db.runAsync(
             `INSERT OR REPLACE INTO messages (
               id, roomId, senderId, content, type, createdAt, createdTimestamp,
-              replyToId, replyTo, sender, editedAt, deletedAt, isPending
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+              replyToId, replyTo, sender, editedAt, deletedAt, isPending, localUri
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
             [
               message.id,
               message.roomId,
@@ -222,12 +234,28 @@ class LocalDatabase {
               message.editedAt || null,
               message.deletedAt || null,
               message.isPending ? 1 : 0,
+              message.localUri || null,
             ],
           );
         }
       });
     } catch (error) {
       console.warn('LocalDb saveMessages toplu kayıt hatası:', error);
+    }
+  }
+
+  /**
+   * Medya mesajı yerel önbelleğe indiğinde veya kaydedildiğinde localUri'yi günceller.
+   */
+  async updateMessageLocalUri(messageId: string, localUri: string): Promise<void> {
+    try {
+      const db = await this.getDb();
+      await db.runAsync(
+        'UPDATE messages SET localUri = ? WHERE id = ?;',
+        [localUri, messageId],
+      );
+    } catch (error) {
+      console.warn('LocalDb updateMessageLocalUri hatası:', error);
     }
   }
 
@@ -258,7 +286,7 @@ class LocalDatabase {
       const db = await this.getDb();
       if (softDelete) {
         await db.runAsync(
-          'UPDATE messages SET deletedAt = ? WHERE id = ?;',
+          "UPDATE messages SET deletedAt = ?, content = '' WHERE id = ?;",
           [new Date().toISOString(), messageId],
         );
       } else {

@@ -27,6 +27,9 @@ import { liveKitService, type VideoTracksState } from '../services/livekit';
 import { notificationService } from '../services/notifications';
 import { foregroundServiceManager } from '../services/foregroundService';
 import { callSoundService } from '../services/sound';
+import { useAudioRouting } from '../hooks/useAudioRouting';
+import { AudioOutputPickerModal } from './modals/AudioOutputPickerModal';
+import { requestAudioPermissions } from '../services/permissions';
 
 const { colors } = chronoTheme;
 
@@ -44,15 +47,16 @@ export const ActiveCallModal: React.FC = () => {
   } = useChatStore();
 
   const [callDuration, setCallDuration] = useState(0);
-  const [speakerOn, setSpeakerOn] = useState(false);
   const [livekitToken, setLivekitToken] = useState<string | null>(null);
   const [livekitServer, setLivekitServer] = useState<string | null>(null);
   const [livekitLoading, setLivekitLoading] = useState(false);
   const [isMinimized, setIsMinimized] = useState(false);
+  const [audioPickerVisible, setAudioPickerVisible] = useState(false);
   const [videoTracks, setVideoTracks] = useState<VideoTracksState>({
     local: null,
     remote: null,
     facingMode: 'user',
+    remoteTracks: {},
   });
 
   // Canlı LiveKit video kanallarını dinle
@@ -71,6 +75,67 @@ export const ActiveCallModal: React.FC = () => {
   const isIncoming = !isMeCaller && activeCall?.state === 'ringing';
   const isOutgoing = isMeCaller && activeCall?.state === 'ringing';
   const isActive = activeCall?.state === 'active';
+  const isVideoCall = !!(activeCall?.video || isVideoOn || videoTracks.remote);
+
+  // Ses oturumu ve cihaz yönlendirme (Bluetooth, Hoparlör, Ahize, Kulaklık)
+  const {
+    availableOutputs,
+    currentOutput,
+    selectAudioOutput,
+    toggleSpeaker,
+    refreshOutputs,
+    showRoutePicker,
+    hasMultipleOutputs,
+    isAudioReady,
+  } = useAudioRouting({
+    callId: activeCall?.callId,
+    isVideo: isVideoCall,
+    isActive,
+  });
+
+  // Çift bağlantı ve token isteklerini engelleyen kilit referansları
+  const connectingRoomRef = useRef<string | null>(null);
+  const connectedRoomRef = useRef<string | null>(null);
+  const ongoingCallIdRef = useRef<string | null>(null);
+  const isTearingDownRef = useRef<boolean>(false);
+
+  const handleAudioPress = () => {
+    if (hasMultipleOutputs && (availableOutputs.length > 2 || Platform.OS === 'ios')) {
+      setAudioPickerVisible(true);
+    } else {
+      toggleSpeaker();
+    }
+  };
+
+  const getAudioIcon = () => {
+    switch (currentOutput) {
+      case 'bluetooth':
+        return 'bluetooth';
+      case 'headset':
+        return 'headset';
+      case 'speaker':
+        return 'volume-high';
+      case 'earpiece':
+      default:
+        return 'ear-outline';
+    }
+  };
+
+  const getAudioLabel = () => {
+    switch (currentOutput) {
+      case 'bluetooth':
+        return 'Bluetooth';
+      case 'headset':
+        return 'Kulaklık';
+      case 'speaker':
+        return 'Hoparlör';
+      case 'earpiece':
+      default:
+        return 'Ahize';
+    }
+  };
+
+  const isAudioActive = currentOutput !== 'earpiece';
 
   // CallKeep (CallKit / TelecomManager) dinleyicilerini bağla
   useEffect(() => {
@@ -117,11 +182,12 @@ export const ActiveCallModal: React.FC = () => {
     }
   }, [activeCall?.callId]);
 
-  // Sistem araması (CallKeep) senkronizasyonu
+  // Sistem araması (CallKeep) senkronizasyonu ve genel çağrı sonlandırma cleanup'ı
   const lastCallIdRef = useRef<string | null>(null);
   useEffect(() => {
     if (activeCall) {
       lastCallIdRef.current = activeCall.callId;
+      isTearingDownRef.current = false;
       const callerName = otherUser?.displayName || otherUser?.username || 'Kullanıcı';
 
       if (isIncoming && activeCall.state === 'ringing') {
@@ -131,11 +197,19 @@ export const ActiveCallModal: React.FC = () => {
       } else if (isActive) {
         callKeepService.reportConnectedCall(activeCall.callId);
       }
-    } else if (lastCallIdRef.current) {
-      callKeepService.endCall(lastCallIdRef.current);
+    } else if (lastCallIdRef.current && !isTearingDownRef.current) {
+      // Arama GERÇEKTEN sonlandı (activeCall null oldu) - Çift çağrıyı isTearingDownRef ile kilitle
+      isTearingDownRef.current = true;
+      const callIdToEnd = lastCallIdRef.current;
       lastCallIdRef.current = null;
-      liveKitService.disconnect();
-      notificationService.dismissOngoingCallNotification();
+      connectingRoomRef.current = null;
+      connectedRoomRef.current = null;
+      ongoingCallIdRef.current = null;
+      setLivekitToken(null);
+      setLivekitServer(null);
+      callKeepService.endCall(callIdToEnd);
+      liveKitService.disconnect().catch(() => {});
+      notificationService.dismissOngoingCallNotification().catch(() => {});
     }
   }, [activeCall, isIncoming, isOutgoing, isActive]);
 
@@ -148,7 +222,8 @@ export const ActiveCallModal: React.FC = () => {
           callSoundService.stopAll();
         };
       } else if (isIncoming) {
-        // Gelen aramada kesintisiz, sürekli titreşim döngüsü çalışır.
+        // Gelen aramada zil sesi çalar (diğer medyaları duraklatır) ve kesintisiz titreşim döngüsü çalışır.
+        callSoundService.startIncomingRingtone();
         Vibration.vibrate([0, 1000, 800, 1000], true);
         return () => {
           Vibration.cancel();
@@ -185,76 +260,101 @@ export const ActiveCallModal: React.FC = () => {
     }
   }, [activeCall?.state]);
 
-  // Arama süresi sayacı, Bildirim Paneli Kartı ve LiveKit bağlantısı
+  // 1. Canlı Görüşme Sayacı ve Foreground Service Kartı
+  // Yalnızca isActive ve activeCall varlığında tetiklenir; ara render'larda servisi düşürmez!
   useEffect(() => {
     let timer: any = null;
     if (isActive && activeCall) {
-      setCallDuration(0);
-      const otherName = otherUser?.displayName || otherUser?.username || 'Kullanıcı';
-      const callStartTime = Date.now();
+      const callId = activeCall.callId;
 
-      // Arama bağlandığında YALNIZCA BİR KEZ ongoing bildirimi planla (Android kronometresi sistem tarafından işletilir)
-      notificationService.showOngoingCallNotification(
-        otherName,
-        activeCall.video,
-        activeCall.callId,
-        callStartTime,
-      );
+      // Arama bağlandığında YALNIZCA BİR KEZ ongoing bildirimi planla
+      if (ongoingCallIdRef.current !== callId) {
+        ongoingCallIdRef.current = callId;
+        setCallDuration(0);
+        const otherName = otherUser?.displayName || otherUser?.username || 'Kullanıcı';
+        notificationService.showOngoingCallNotification(
+          otherName,
+          activeCall.video,
+          callId,
+          Date.now(),
+        );
+      }
 
-      // Yalnızca modal içi süre sayacı (artık periyodik bildirim basmaz)
+      // Modal içi süre sayacı
       timer = setInterval(() => {
         setCallDuration((prev) => prev + 1);
       }, 1000);
-
-      // LiveKit token'ını sunucudan çek
-      if (activeCall.mediaRoom) {
-        setLivekitLoading(true);
-        api
-          .get(`/livekit/token/${activeCall.mediaRoom}`)
-          .then(async (res) => {
-            const token = res.data?.token || null;
-            const server = res.data?.serverUrl || null;
-            setLivekitToken(token);
-            setLivekitServer(server);
-
-            // Android için mikrofon ve gerekirse kamera iznini çalışma zamanında doğrula
-            if (Platform.OS === 'android') {
-              try {
-                const perms = [PermissionsAndroid.PERMISSIONS.RECORD_AUDIO];
-                if (activeCall.video || isVideoOn) {
-                  perms.push(PermissionsAndroid.PERMISSIONS.CAMERA);
-                }
-                await PermissionsAndroid.requestMultiple(perms);
-              } catch (permErr) {
-                console.warn('Mikrofon/kamera izin uyarısı:', permErr);
-              }
-            }
-
-            // Gerçek WebRTC LiveKit odasına bağlan
-            if (token && server) {
-              liveKitService.connect(server, token, !isMuted, activeCall.video || isVideoOn);
-            }
-          })
-          .catch((err) => {
-            console.warn('LiveKit token alma hatası:', err?.message);
-          })
-          .finally(() => {
-            setLivekitLoading(false);
-          });
-      }
     } else {
       setCallDuration(0);
-      setLivekitToken(null);
-      setLivekitServer(null);
-      liveKitService.disconnect();
-      notificationService.dismissOngoingCallNotification();
+      if (ongoingCallIdRef.current) {
+        ongoingCallIdRef.current = null;
+        notificationService.dismissOngoingCallNotification();
+      }
     }
 
     return () => {
       if (timer) clearInterval(timer);
-      notificationService.dismissOngoingCallNotification();
+      // DİKKAT: Cleanup içinde dismissOngoingCallNotification ÇAĞRILMAZ!
+      // Ara state güncellemelerinde Foreground Service'in durmaması için
+      // yalnızca arama sonlandığında (else bloğunda veya lastCallIdRef cleanup'ında) durdurulur.
     };
-  }, [isActive, activeCall?.mediaRoom]);
+  }, [isActive, activeCall?.callId]);
+
+  // 2. WebRTC LiveKit Odasına Bağlanma
+  // isActive ve isAudioReady hazır olduğunda TEK SEFER bağlanır
+  useEffect(() => {
+    if (!isActive || !activeCall?.mediaRoom || !isAudioReady) {
+      return;
+    }
+
+    const targetRoom = activeCall.mediaRoom;
+    if (connectingRoomRef.current === targetRoom || connectedRoomRef.current === targetRoom) {
+      return;
+    }
+
+    connectingRoomRef.current = targetRoom;
+    setLivekitLoading(true);
+
+    (async () => {
+      try {
+        // Android için mikrofon ve Bluetooth izinlerini çalışma zamanında doğrula
+        if (Platform.OS === 'android') {
+          try {
+            await requestAudioPermissions();
+            if (activeCall.video || isVideoOn) {
+              await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.CAMERA);
+            }
+          } catch (permErr) {
+            console.warn('Mikrofon/kamera izin uyarısı:', permErr);
+          }
+        }
+
+        // LiveKit token'ını tek sefer çek
+        const res = await api.get(`/livekit/token/${targetRoom}`);
+        const token = res.data?.token || null;
+        const server = res.data?.serverUrl || null;
+        setLivekitToken(token);
+        setLivekitServer(server);
+
+        // Gerçek WebRTC LiveKit odasına güvenli ve tekil bağlan
+        if (token && server && connectingRoomRef.current === targetRoom) {
+          await liveKitService.connect(server, token, !isMuted, activeCall.video || isVideoOn);
+          connectedRoomRef.current = targetRoom;
+        }
+      } catch (err: any) {
+        console.warn('LiveKit token/bağlantı hatası:', err?.message || err);
+        connectingRoomRef.current = null;
+      } finally {
+        setLivekitLoading(false);
+      }
+    })();
+
+    return () => {
+      // DİKKAT: Bu cleanup'ta disconnect() ÇAĞRILMAZ!
+      // Ara re-render'larda oda bağlantısının kopmasını engellemek için
+      // LiveKit bağlantısı sadece arama gerçekten bittiğinde kapatılır.
+    };
+  }, [isActive, isAudioReady, activeCall?.mediaRoom]);
 
   // Görüntülü arama geldiğinde veya başlatıldığında kamerayı otomatik hazırla
   useEffect(() => {
@@ -285,13 +385,6 @@ export const ActiveCallModal: React.FC = () => {
       liveKitService.setCameraEnabled(isVideoOn);
     }
   }, [isVideoOn, isActive]);
-
-  // Hoparlör durumu değiştiğinde WebRTC ses çıkışını güncelle (Hoparlör / Ahize)
-  useEffect(() => {
-    if (isActive) {
-      liveKitService.setSpeakerOutput(speakerOn);
-    }
-  }, [speakerOn, isActive]);
 
   if (!activeCall) return null;
 
@@ -343,8 +436,6 @@ export const ActiveCallModal: React.FC = () => {
       </SafeAreaView>
     );
   }
-
-  const isVideoCall = !!(activeCall?.video || isVideoOn || videoTracks.remote);
 
   return (
     <Modal
@@ -625,19 +716,38 @@ export const ActiveCallModal: React.FC = () => {
                     <Ionicons name="camera-reverse-outline" size={22} color="#FFFFFF" />
                   </TouchableOpacity>
 
-                  {/* Hoparlör */}
+                  {/* Ses Çıkışı (Hoparlör / Bluetooth / Kulaklık / Ahize) */}
                   <TouchableOpacity
                     style={[
                       styles.videoCircleBtn,
-                      speakerOn ? styles.circleBtnWhite : styles.videoCircleBtnDark,
+                      isAudioActive ? styles.circleBtnWhite : styles.videoCircleBtnDark,
+                      currentOutput === 'bluetooth' && {
+                        backgroundColor: 'rgba(56, 189, 248, 0.25)',
+                        borderColor: '#38BDF8',
+                        borderWidth: 1.5,
+                      },
+                      currentOutput === 'headset' && {
+                        backgroundColor: 'rgba(16, 185, 129, 0.25)',
+                        borderColor: '#10B981',
+                        borderWidth: 1.5,
+                      },
                     ]}
-                    onPress={() => setSpeakerOn(!speakerOn)}
+                    onPress={handleAudioPress}
+                    onLongPress={() => setAudioPickerVisible(true)}
                     activeOpacity={0.7}
                   >
                     <Ionicons
-                      name={speakerOn ? 'volume-high' : 'volume-high-outline'}
+                      name={getAudioIcon() as any}
                       size={22}
-                      color={speakerOn ? '#000000' : '#FFFFFF'}
+                      color={
+                        currentOutput === 'bluetooth'
+                          ? '#38BDF8'
+                          : currentOutput === 'headset'
+                          ? '#10B981'
+                          : currentOutput === 'speaker'
+                          ? '#000000'
+                          : '#FFFFFF'
+                      }
                     />
                   </TouchableOpacity>
 
@@ -659,7 +769,7 @@ export const ActiveCallModal: React.FC = () => {
             ) : (
               /* Ekran 1 & 2: Sesli Arama Kontrolleri */
               <View style={styles.voiceCallControlsWrapper}>
-                {/* Üst 3 Buton: Mikrofon, Kamera, Hoparlör */}
+                {/* Üst 3 Buton: Mikrofon, Kamera, Ses Çıkışı */}
                 <View style={styles.voiceButtonsRow}>
                   {/* Mikrofon (Ekran 2: Açıkken Beyaz Zemin, Siyah İkon) */}
                   <View style={styles.voiceControlCol}>
@@ -712,23 +822,42 @@ export const ActiveCallModal: React.FC = () => {
                     <Text style={styles.voiceBtnLabel}>Kamera</Text>
                   </View>
 
-                  {/* Hoparlör */}
+                  {/* Ses Çıkışı (Bluetooth / Hoparlör / Ahize / Kulaklık) */}
                   <View style={styles.voiceControlCol}>
                     <TouchableOpacity
                       style={[
                         styles.voiceCircleBtn,
-                        speakerOn ? styles.circleBtnWhite : styles.voiceCircleBtnDark,
+                        isAudioActive ? styles.circleBtnWhite : styles.voiceCircleBtnDark,
+                        currentOutput === 'bluetooth' && {
+                          backgroundColor: 'rgba(56, 189, 248, 0.25)',
+                          borderColor: '#38BDF8',
+                          borderWidth: 1.5,
+                        },
+                        currentOutput === 'headset' && {
+                          backgroundColor: 'rgba(16, 185, 129, 0.25)',
+                          borderColor: '#10B981',
+                          borderWidth: 1.5,
+                        },
                       ]}
-                      onPress={() => setSpeakerOn(!speakerOn)}
+                      onPress={handleAudioPress}
+                      onLongPress={() => setAudioPickerVisible(true)}
                       activeOpacity={0.7}
                     >
                       <Ionicons
-                        name={speakerOn ? 'volume-high' : 'volume-high-outline'}
+                        name={getAudioIcon() as any}
                         size={28}
-                        color={speakerOn ? '#000000' : '#FFFFFF'}
+                        color={
+                          currentOutput === 'bluetooth'
+                            ? '#38BDF8'
+                            : currentOutput === 'headset'
+                            ? '#10B981'
+                            : currentOutput === 'speaker'
+                            ? '#000000'
+                            : '#FFFFFF'
+                        }
                       />
                     </TouchableOpacity>
-                    <Text style={styles.voiceBtnLabel}>Hoparlör</Text>
+                    <Text style={styles.voiceBtnLabel}>{getAudioLabel()}</Text>
                   </View>
                 </View>
 
@@ -760,6 +889,15 @@ export const ActiveCallModal: React.FC = () => {
             )}
           </View>
         </SafeAreaView>
+
+        <AudioOutputPickerModal
+          visible={audioPickerVisible}
+          onClose={() => setAudioPickerVisible(false)}
+          availableOutputs={availableOutputs}
+          currentOutput={currentOutput}
+          onSelectOutput={selectAudioOutput}
+          onOpenSystemPicker={showRoutePicker}
+        />
       </View>
     </Modal>
   );

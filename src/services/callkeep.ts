@@ -54,6 +54,9 @@ class CallKeepService {
 
       await RNCallKeep.setup(options);
       RNCallKeep.setAvailable(true);
+      if (typeof RNCallKeep.setReachable === 'function') {
+        RNCallKeep.setReachable();
+      }
 
       if (Platform.OS === 'android') {
         try {
@@ -135,6 +138,40 @@ class CallKeepService {
       RNCallKeep.setCurrentCallActive(callId);
     } catch (err) {
       console.warn('CallKeep arama aktif hatası:', err);
+    }
+  }
+
+  async getAudioRoutes(): Promise<any[]> {
+    if (!isCallKeepAvailable || !RNCallKeep) return [];
+    try {
+      const routes = await RNCallKeep.getAudioRoutes();
+      return Array.isArray(routes) ? routes : [];
+    } catch (err) {
+      console.warn('CallKeep getAudioRoutes error:', err);
+      return [];
+    }
+  }
+
+  async setAudioRoute(callUuid: string, routeName: string) {
+    if (!isCallKeepAvailable || !RNCallKeep) return;
+    try {
+      await RNCallKeep.setAudioRoute(callUuid, routeName);
+    } catch (err) {
+      console.warn('CallKeep setAudioRoute error:', err);
+    }
+  }
+
+  addOnAudioRouteChange(listener: (data: { output: string; callUUID?: string }) => void) {
+    if (!isCallKeepAvailable || !RNCallKeep) return () => {};
+    try {
+      RNCallKeep.addEventListener('didChangeAudioRoute', listener);
+      return () => {
+        try {
+          RNCallKeep.removeEventListener('didChangeAudioRoute', listener);
+        } catch {}
+      };
+    } catch {
+      return () => {};
     }
   }
 

@@ -1,3 +1,6 @@
+import { registerGlobals } from '@livekit/react-native';
+registerGlobals();
+
 import '../services/backgroundNotificationTask';
 import React, { useEffect } from 'react';
 import {
@@ -11,9 +14,12 @@ import {
 import { Stack, useRouter, useSegments } from 'expo-router';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import * as Notifications from 'expo-notifications';
+import notifee from '@notifee/react-native';
 import { useChatStore } from '../store/useChatStore';
 import { ActiveCallModal } from '../components/ActiveCallModal';
 import { updateService } from '../services/updates';
+import { foregroundServiceManager } from '../services/foregroundService';
+import { notificationService } from '../services/notifications';
 import { chronoTheme } from '../theme/colors';
 
 const { colors } = chronoTheme;
@@ -58,12 +64,24 @@ export default function RootLayout() {
   useEffect(() => {
     const sub = Notifications.addNotificationResponseReceivedListener((response) => {
       const data = response.notification.request.content.data;
-      const roomId = data?.roomId;
+      const roomId = data?.roomId as string | undefined;
       if (roomId) {
-        router.push({ pathname: '/chat/[id]', params: { id: roomId as string } });
+        void notificationService.clearRoomNotifications(roomId);
+        router.push({ pathname: '/chat/[id]', params: { id: roomId } });
       }
     });
-    return () => sub.remove();
+
+    const unsubNotifee = foregroundServiceManager.onRoomNotificationPress((roomId) => {
+      if (roomId) {
+        void notificationService.clearRoomNotifications(roomId);
+        router.push({ pathname: '/chat/[id]', params: { id: roomId } });
+      }
+    });
+
+    return () => {
+      sub.remove();
+      unsubNotifee();
+    };
   }, [router]);
 
   // 2. Uygulama tamamen kapalıyken (Killed State) bildirime tıklanarak başlatıldıysa hedef odaya deep link sağla
@@ -75,12 +93,28 @@ export default function RootLayout() {
       .then((response) => {
         if (!isMounted || !response) return;
         const data = response.notification.request.content.data;
-        const roomId = data?.roomId;
+        const roomId = data?.roomId as string | undefined;
         if (roomId) {
-          router.push({ pathname: '/chat/[id]', params: { id: roomId as string } });
+          void notificationService.clearRoomNotifications(roomId);
+          router.push({ pathname: '/chat/[id]', params: { id: roomId } });
         }
       })
       .catch(console.warn);
+
+    if (Platform.OS === 'android') {
+      notifee
+        .getInitialNotification()
+        .then((initialNotification) => {
+          if (!isMounted || !initialNotification) return;
+          const data = initialNotification.notification?.data;
+          const roomId = data?.roomId as string | undefined;
+          if (data?.type === 'message' && roomId) {
+            void notificationService.clearRoomNotifications(roomId);
+            router.push({ pathname: '/chat/[id]', params: { id: roomId } });
+          }
+        })
+        .catch(console.warn);
+    }
 
     return () => {
       isMounted = false;

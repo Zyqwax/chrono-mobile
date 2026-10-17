@@ -3,6 +3,7 @@ import {
   ActivityIndicator,
   Alert,
   Animated,
+  AppState,
   BackHandler,
   Image,
   ImageBackground,
@@ -33,8 +34,20 @@ import { useShallow } from "zustand/react/shallow";
 import * as Clipboard from "expo-clipboard";
 import { requestCallPermissions } from "../services/permissions";
 import { CallConfirmModal } from "./modals/CallConfirmModal";
+import { mediaCacheService } from "../services/mediaCacheService";
 import { ForwardMessageModal } from "./modals/ForwardMessageModal";
 import { MessageInfoModal } from "./modals/MessageInfoModal";
+import * as ImagePicker from "expo-image-picker";
+import {
+  useAudioRecorder,
+  RecordingPresets,
+  requestRecordingPermissionsAsync,
+  setAudioModeAsync,
+} from "expo-audio";
+import { ImageBubble } from "./chat/ImageBubble";
+import { AudioBubble } from "./chat/AudioBubble";
+import { AttachmentSheet } from "./chat/AttachmentSheet";
+import { ImagePreviewModal } from "./chat/ImagePreviewModal";
 
 const CHAT_BACKGROUND = require("../../assets/chrono-chat-background.png");
 const EMPTY_MESSAGES: Message[] = [];
@@ -50,10 +63,6 @@ const isSameCalendarDay = (d1?: Date | string | number | null, d2?: Date | strin
     date1.getDate() === date2.getDate()
   );
 };
-
-if (Platform.OS === "android" && UIManager.setLayoutAnimationEnabledExperimental) {
-  UIManager.setLayoutAnimationEnabledExperimental(true);
-}
 
 const { colors } = chronoTheme;
 
@@ -82,6 +91,7 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({ room, onBack }) 
   const [infoModalMessage, setInfoModalMessage] = useState<Message | null>(null);
 
   const handleSwipeReply = useCallback((item: Message) => {
+    if (item.deletedAt) return;
     setReplyMessage(item);
     setTimeout(() => {
       textInputRef.current?.focus();
@@ -124,6 +134,7 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({ room, onBack }) 
     activeVoiceRoomId,
     joinRoomVoice,
     startCall,
+    uploadMedia,
     activeVoiceCount,
     rooms,
   } = useChatStore(
@@ -141,6 +152,7 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({ room, onBack }) 
       activeVoiceRoomId: s.activeVoiceRoomId,
       joinRoomVoice: s.joinRoomVoice,
       startCall: s.startCall,
+      uploadMedia: s.uploadMedia,
       activeVoiceCount: s.roomVoiceStates?.[room.id]?.count ?? 0,
       rooms: s.rooms,
     })),
@@ -188,9 +200,18 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({ room, onBack }) 
 
   const effectiveOthersReadAt = canShowReadReceipt ? currentOthersReadAt : null;
 
-  // Odaya girildiğinde okundu bilgisini sunucuya bildir
+  // Odaya girildiğinde ve uygulama arka plandan bu odaya döndüğünde bildirimleri temizle & okundu bildir
   useEffect(() => {
+    void notificationService.clearRoomNotifications(room.id);
     markAsRead(room.id);
+
+    const sub = AppState.addEventListener("change", (nextState) => {
+      if (nextState === "active") {
+        void notificationService.clearRoomNotifications(room.id);
+        markAsRead(room.id);
+      }
+    });
+    return () => sub.remove();
   }, [room.id, markAsRead]);
 
   const messages = useMemo(() => {
@@ -208,6 +229,27 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({ room, onBack }) 
       }
     }
   }, [messages.length, room.id, currentUserId, markAsRead]);
+
+  // Yanıtlanmak üzere seçilen mesaj silinirse yanıtlama modunu otomatik kapat
+  useEffect(() => {
+    if (!replyMessage) return;
+    const current = messages.find((m) => m.id === replyMessage.id);
+    if (current?.deletedAt) {
+      setReplyMessage(null);
+    }
+  }, [messages, replyMessage]);
+
+  // Eğer seçilen mesajlar arasında silinen olursa, onları seçim listesinden çıkar
+  useEffect(() => {
+    if (selectedMessages.length === 0) return;
+    const filtered = selectedMessages.filter((sel) => {
+      const live = messages.find((m) => m.id === sel.id);
+      return !sel.deletedAt && !live?.deletedAt;
+    });
+    if (filtered.length !== selectedMessages.length) {
+      setSelectedMessages(filtered);
+    }
+  }, [messages, selectedMessages]);
 
   const loadChat = useCallback(
     async (isRetry = false) => {
@@ -288,7 +330,7 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({ room, onBack }) 
       setEditingMessage(null);
       await editMessage(editingMessage.id, text);
     } else {
-      const replyId = replyMessage?.id;
+      const replyId = replyMessage && !replyMessage.deletedAt ? replyMessage.id : undefined;
       setReplyMessage(null);
       await sendMessage(room.id, text, replyId);
     }
@@ -308,10 +350,185 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({ room, onBack }) 
     setVoiceSheetVisible(true);
   };
 
+  // -------------------------------------------------------------
+  // Media & Voice Recording State & Handlers
+  // -------------------------------------------------------------
+  const [attachmentSheetVisible, setAttachmentSheetVisible] = useState(false);
+  const [previewImageUri, setPreviewImageUri] = useState<string | null>(null);
+  const [previewMode, setPreviewMode] = useState<"viewer" | "send">("viewer");
+  const [isUploadingImage, setIsUploadingImage] = useState(false);
+
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordingDuration, setRecordingDuration] = useState(0);
+  const recordingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
+
+  const startVoiceRecording = async () => {
+    try {
+      const permission = await requestRecordingPermissionsAsync();
+      if (!permission.granted) {
+        Alert.alert("Mikrofon İzni Gerekli", "Sesli mesaj göndermek için mikrofon erişimine izin vermelisiniz.");
+        return;
+      }
+      await setAudioModeAsync({
+        allowsRecording: true,
+        playsInSilentMode: true,
+      });
+
+      await recorder.prepareToRecordAsync();
+      recorder.record();
+      setIsRecording(true);
+      setRecordingDuration(0);
+
+      recordingTimerRef.current = setInterval(() => {
+        setRecordingDuration((prev) => prev + 1);
+      }, 1000);
+    } catch (err: any) {
+      console.warn("Kayıt başlatılamadı:", err?.message || err);
+      Alert.alert("Hata", "Ses kaydı başlatılamadı.");
+    }
+  };
+
+  const cancelVoiceRecording = async () => {
+    try {
+      if (recordingTimerRef.current) {
+        clearInterval(recordingTimerRef.current);
+        recordingTimerRef.current = null;
+      }
+      setIsRecording(false);
+      setRecordingDuration(0);
+      await recorder.stop();
+    } catch (err) {
+      console.warn("Kayıt iptal hatası:", err);
+    }
+  };
+
+  const stopAndSendVoiceRecording = async () => {
+    try {
+      if (recordingTimerRef.current) {
+        clearInterval(recordingTimerRef.current);
+        recordingTimerRef.current = null;
+      }
+      setIsRecording(false);
+      const recordedDuration = recordingDuration;
+      setRecordingDuration(0);
+
+      await recorder.stop();
+      const uri = recorder.uri;
+      if (!uri) return;
+
+      if (recordedDuration < 1) {
+        return;
+      }
+
+      // 1. Ses kaydını hemen kalıcı yerel Chrono klasörüne (Android/media/com.zyqwax.chrono/Chrono/Chrono Voice) kaydet
+      const savedLocalUri = await mediaCacheService.saveOutgoingMedia(uri, "AUDIO");
+
+      const formData = new FormData();
+      const filename = `voice_${Date.now()}.m4a`;
+      formData.append("file", {
+        uri: savedLocalUri || uri,
+        name: filename,
+        type: "audio/m4a",
+      } as any);
+
+      const res = await uploadMedia(formData);
+      if (res?.url) {
+        await sendMessage(room.id, res.url, replyMessage?.id, "AUDIO", savedLocalUri);
+        setReplyMessage(null);
+      }
+    } catch (err: any) {
+      console.warn("Ses kaydı gönderme hatası:", err?.message || err);
+      Alert.alert("Hata", "Sesli mesaj yüklenemedi.");
+    }
+  };
+
+  const handlePickCamera = async () => {
+    try {
+      const permission = await ImagePicker.requestCameraPermissionsAsync();
+      if (!permission.granted) {
+        Alert.alert("Kamera İzni Gerekli", "Fotoğraf çekebilmek için kamera iznine ihtiyacımız var.");
+        return;
+      }
+      const result = await ImagePicker.launchCameraAsync({
+        mediaTypes: ["images"],
+        quality: 0.8,
+      });
+      if (!result.canceled && result.assets && result.assets.length > 0) {
+        setPreviewImageUri(result.assets[0].uri);
+        setPreviewMode("send");
+      }
+    } catch (err: any) {
+      console.warn("Kamera hatası:", err?.message || err);
+    }
+  };
+
+  const handlePickGallery = async () => {
+    try {
+      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!permission.granted) {
+        Alert.alert("Galeri İzni Gerekli", "Fotoğraf seçebilmek için galeri iznine ihtiyacımız var.");
+        return;
+      }
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ["images"],
+        quality: 0.8,
+      });
+      if (!result.canceled && result.assets && result.assets.length > 0) {
+        setPreviewImageUri(result.assets[0].uri);
+        setPreviewMode("send");
+      }
+    } catch (err: any) {
+      console.warn("Galeri hatası:", err?.message || err);
+    }
+  };
+
+  const handleSendImage = async (caption?: string) => {
+    if (!previewImageUri) return;
+    setIsUploadingImage(true);
+    try {
+      // 1. Görseli hemen kalıcı yerel Chrono klasörüne (Android/media/com.zyqwax.chrono/Chrono/Chrono Images) kaydet
+      const savedLocalUri = await mediaCacheService.saveOutgoingMedia(previewImageUri, "IMAGE");
+
+      const formData = new FormData();
+      const filename = previewImageUri.split("/").pop() || `photo_${Date.now()}.jpg`;
+      const match = /\.(\w+)$/.exec(filename);
+      const type = match ? `image/${match[1]}` : "image/jpeg";
+
+      formData.append("file", {
+        uri: savedLocalUri || previewImageUri,
+        name: filename,
+        type,
+      } as any);
+
+      const res = await uploadMedia(formData);
+      if (res?.url) {
+        await sendMessage(room.id, res.url, replyMessage?.id, "IMAGE", savedLocalUri);
+        if (caption) {
+          await sendMessage(room.id, caption);
+        }
+        setReplyMessage(null);
+        setPreviewImageUri(null);
+      }
+    } catch (err: any) {
+      console.warn("Fotoğraf gönderme hatası:", err?.message || err);
+      Alert.alert("Hata", "Fotoğraf yüklenemedi.");
+    } finally {
+      setIsUploadingImage(false);
+    }
+  };
+
+  const handleViewImageFullscreen = useCallback((imageUrl: string) => {
+    setPreviewImageUri(imageUrl);
+    setPreviewMode("viewer");
+  }, []);
+
   const isSelectionMode = selectedMessages.length > 0;
   const selectedMessageIds = useMemo(() => new Set(selectedMessages.map((m) => m.id)), [selectedMessages]);
 
   const handleMessageLongPress = useCallback((item: Message) => {
+    if (item.deletedAt) return;
     setSelectedMessages((prev) => {
       const exists = prev.some((m) => m.id === item.id);
       return exists ? prev.filter((m) => m.id !== item.id) : [...prev, item];
@@ -319,6 +536,7 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({ room, onBack }) 
   }, []);
 
   const handleMessagePress = useCallback((item: Message) => {
+    if (item.deletedAt) return;
     setSelectedMessages((prev) => {
       if (prev.length === 0) return prev;
       const exists = prev.some((m) => m.id === item.id);
@@ -329,6 +547,7 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({ room, onBack }) 
   const handleSelectionReply = useCallback(() => {
     if (selectedMessages.length !== 1) return;
     const msg = selectedMessages[0];
+    if (msg.deletedAt) return;
     setSelectedMessages([]);
     setReplyMessage(msg);
     setTimeout(() => {
@@ -338,28 +557,38 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({ room, onBack }) 
 
   const handleSelectionCopy = useCallback(async () => {
     if (selectedMessages.length === 0) return;
-    const textToCopy = selectedMessages
+    const validMessages = selectedMessages.filter((m) => !m.deletedAt);
+    if (validMessages.length === 0) {
+      setSelectedMessages([]);
+      return;
+    }
+    const textToCopy = validMessages
       .map((m) => m.content || "")
       .filter(Boolean)
       .join("\n");
     if (textToCopy) {
       await Clipboard.setStringAsync(textToCopy);
     }
-    const count = selectedMessages.length;
+    const count = validMessages.length;
     setSelectedMessages([]);
     Alert.alert("Kopyalandı", count > 1 ? `${count} mesaj panoya kopyalandı.` : "Mesaj panoya kopyalandı.");
   }, [selectedMessages]);
 
   const handleSelectionForward = useCallback(() => {
-    if (selectedMessages.length === 0) return;
+    const validMessages = selectedMessages.filter((m) => !m.deletedAt);
+    if (validMessages.length === 0) {
+      setSelectedMessages([]);
+      return;
+    }
     setForwardModalVisible(true);
   }, [selectedMessages]);
 
   const handleExecuteForward = useCallback(
     async (targetRoom: Room) => {
       setForwardModalVisible(false);
-      const messagesToForward = [...selectedMessages];
+      const messagesToForward = selectedMessages.filter((m) => !m.deletedAt);
       setSelectedMessages([]);
+      if (messagesToForward.length === 0) return;
 
       for (const msg of messagesToForward) {
         if (msg.content) {
@@ -383,6 +612,7 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({ room, onBack }) 
 
   const handleSelectionInfo = useCallback(() => {
     if (selectedMessages.length !== 1) return;
+    if (selectedMessages[0].deletedAt) return;
     setInfoModalMessage(selectedMessages[0]);
   }, [selectedMessages]);
 
@@ -474,8 +704,8 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({ room, onBack }) 
               </View>
 
               <View style={styles.headerActions}>
-                {/* Yanıtla (Reply - Yalnızca 1 mesaj seçiliyse) */}
-                {selectedMessages.length === 1 && (
+                {/* Yanıtla (Reply - Yalnızca 1 mesaj seçiliyse ve silinmemişse) */}
+                {selectedMessages.length === 1 && !selectedMessages[0].deletedAt && (
                   <TouchableOpacity
                     style={styles.actionIconBtn}
                     onPress={handleSelectionReply}
@@ -663,6 +893,7 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({ room, onBack }) 
               onLongPressMessage={handleMessageLongPress}
               onSwipeReply={handleSwipeReply}
               onCallPress={handleStartCall}
+              onPressImage={handleViewImageFullscreen}
             />
           )}
         </ImageBackground>
@@ -674,8 +905,18 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({ room, onBack }) 
               <Text style={styles.actionBannerTitle}>
                 {editingMessage ? "Mesajı Düzenle" : `Yanıtla: ${replyMessage?.sender?.displayName || "Kullanıcı"}`}
               </Text>
-              <Text style={styles.actionBannerText} numberOfLines={1}>
-                {editingMessage ? editingMessage.content : replyMessage?.content}
+              <Text
+                style={[
+                  styles.actionBannerText,
+                  !editingMessage && replyMessage?.deletedAt ? styles.deletedActionBannerText : null,
+                ]}
+                numberOfLines={1}
+              >
+                {editingMessage
+                  ? editingMessage.content
+                  : replyMessage?.deletedAt
+                    ? "Bu mesaj silindi"
+                    : replyMessage?.content || "Mesaj"}
               </Text>
             </View>
             <TouchableOpacity
@@ -695,39 +936,75 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({ room, onBack }) 
         {/* Bottom Input Bar                                              */}
         {/* ------------------------------------------------------------- */}
         <View style={[styles.inputContainer, { paddingBottom: Math.max(insets.bottom, 8) }]}>
-          <View style={styles.inputBox}>
-            <TouchableOpacity style={styles.inputInnerBtn} activeOpacity={0.7}>
-              <Ionicons name="happy-outline" size={24} color="#8A93A8" />
-            </TouchableOpacity>
+          {isRecording ? (
+            <View style={styles.recordingContainer}>
+              <View style={styles.recordingLeft}>
+                <View style={styles.recordingRedDot} />
+                <Text style={styles.recordingTimerText}>
+                  {Math.floor(recordingDuration / 60)}:{recordingDuration % 60 < 10 ? "0" : ""}{recordingDuration % 60}
+                </Text>
+                <Text style={styles.recordingHintText}>Ses kaydediliyor...</Text>
+              </View>
 
-            <TextInput
-              ref={textInputRef}
-              style={styles.textInput}
-              placeholder="Mesaj yaz"
-              placeholderTextColor="#64748B"
-              value={inputText}
-              onChangeText={handleInputChange}
-              multiline
-            />
+              <View style={styles.recordingActions}>
+                <TouchableOpacity
+                  style={styles.cancelRecordBtn}
+                  onPress={cancelVoiceRecording}
+                  activeOpacity={0.7}
+                >
+                  <Ionicons name="trash-outline" size={22} color="#EF4444" />
+                </TouchableOpacity>
 
-            <TouchableOpacity style={styles.inputInnerBtn} activeOpacity={0.7}>
-              <Ionicons name="attach" size={24} color="#8A93A8" />
-            </TouchableOpacity>
-          </View>
+                <TouchableOpacity
+                  style={styles.sendRecordBtn}
+                  onPress={stopAndSendVoiceRecording}
+                  activeOpacity={0.8}
+                >
+                  <Ionicons name="send" size={18} color="#FFFFFF" style={{ marginLeft: 2 }} />
+                </TouchableOpacity>
+              </View>
+            </View>
+          ) : (
+            <>
+              <View style={styles.inputBox}>
+                <TouchableOpacity style={styles.inputInnerBtn} activeOpacity={0.7}>
+                  <Ionicons name="happy-outline" size={24} color="#8A93A8" />
+                </TouchableOpacity>
 
-          {/* Dinamik Gönder / Mikrofon Butonu */}
-          <TouchableOpacity
-            style={styles.actionSendBtn}
-            onPress={inputText.trim() ? handleSend : !isDirect ? handleVoiceJoin : undefined}
-            activeOpacity={0.85}
-          >
-            <Ionicons
-              name={inputText.trim() ? "send" : "mic"}
-              size={19}
-              color="#FFFFFF"
-              style={inputText.trim() ? { marginLeft: 2 } : undefined}
-            />
-          </TouchableOpacity>
+                <TextInput
+                  ref={textInputRef}
+                  style={styles.textInput}
+                  placeholder="Mesaj yaz"
+                  placeholderTextColor="#64748B"
+                  value={inputText}
+                  onChangeText={handleInputChange}
+                  multiline
+                />
+
+                <TouchableOpacity
+                  style={styles.inputInnerBtn}
+                  onPress={() => setAttachmentSheetVisible(true)}
+                  activeOpacity={0.7}
+                >
+                  <Ionicons name="attach" size={24} color="#8A93A8" />
+                </TouchableOpacity>
+              </View>
+
+              {/* Dinamik Gönder / Mikrofon Butonu */}
+              <TouchableOpacity
+                style={styles.actionSendBtn}
+                onPress={inputText.trim() ? handleSend : startVoiceRecording}
+                activeOpacity={0.85}
+              >
+                <Ionicons
+                  name={inputText.trim() ? "send" : "mic"}
+                  size={19}
+                  color="#FFFFFF"
+                  style={inputText.trim() ? { marginLeft: 2 } : undefined}
+                />
+              </TouchableOpacity>
+            </>
+          )}
         </View>
       </KeyboardAvoidingView>
 
@@ -742,6 +1019,24 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({ room, onBack }) 
       {!isDirect && (
         <VoiceRoomSheet visible={voiceSheetVisible} roomName={chatTitle} onClose={() => setVoiceSheetVisible(false)} />
       )}
+
+      <AttachmentSheet
+        visible={attachmentSheetVisible}
+        onClose={() => setAttachmentSheetVisible(false)}
+        onSelectCamera={handlePickCamera}
+        onSelectGallery={handlePickGallery}
+      />
+
+      <ImagePreviewModal
+        visible={!!previewImageUri}
+        imageUri={previewImageUri}
+        mode={previewMode}
+        isSending={isUploadingImage}
+        onClose={() => {
+          if (!isUploadingImage) setPreviewImageUri(null);
+        }}
+        onSend={handleSendImage}
+      />
 
       {/* Özel Sesli / Görüntülü Arama Onay Modalı (Sistem Alert Yerine) */}
       {callModalConfig && (
@@ -861,10 +1156,10 @@ const CallBubble = memo(function CallBubble({
     <View style={styles.callMessageCenterContainer}>
       <TouchableOpacity
         style={styles.callBubblePill}
-        onPress={() => !isSelectionMode && isDirect && onCallPress(video)}
-        onLongPress={() => !isSelectionMode && onLongPress?.(item)}
+        onPress={() => !isSelectionMode && !item.deletedAt && isDirect && onCallPress(video)}
+        onLongPress={() => !isSelectionMode && !item.deletedAt && onLongPress?.(item)}
         delayLongPress={350}
-        disabled={isSelectionMode}
+        disabled={isSelectionMode || !!item.deletedAt}
         activeOpacity={0.8}
       >
         <Ionicons
@@ -1048,12 +1343,12 @@ const TextBubble = memo(function TextBubble({
     !item.replyTo && !isDeleted && !!contentText && !contentText.includes("\n") && contentText.trim().length <= 14;
 
   return (
-    <SwipeableMessage onSwipeReply={handleSwipeReply} isMe={isMe} disabled={isSelectionMode}>
+    <SwipeableMessage onSwipeReply={handleSwipeReply} isMe={isMe} disabled={isSelectionMode || isDeleted}>
       <TouchableOpacity
-        activeOpacity={0.92}
-        onLongPress={handleLongPress}
+        activeOpacity={isDeleted ? 1 : 0.92}
+        onLongPress={isDeleted ? undefined : handleLongPress}
         delayLongPress={350}
-        disabled={isSelectionMode}
+        disabled={isSelectionMode || isDeleted}
         style={[
           styles.messageBubbleContainer,
           isMe ? styles.myMessageContainer : styles.otherMessageContainer,
@@ -1068,8 +1363,14 @@ const TextBubble = memo(function TextBubble({
           {item.replyTo && (
             <View style={styles.replyPreviewInBubble}>
               <Text style={styles.replySenderInBubble}>{item.replyTo.sender?.displayName || "Kullanıcı"}</Text>
-              <Text style={styles.replyTextInBubble} numberOfLines={1}>
-                {item.replyTo.content || "Silinmiş mesaj"}
+              <Text
+                style={[
+                  styles.replyTextInBubble,
+                  (item.replyTo.deletedAt || !item.replyTo.content) && styles.deletedReplyTextInBubble,
+                ]}
+                numberOfLines={1}
+              >
+                {item.replyTo.deletedAt || !item.replyTo.content ? "Bu mesaj silindi" : item.replyTo.content}
               </Text>
             </View>
           )}
@@ -1136,6 +1437,7 @@ interface MessageFeedProps {
   onLongPressMessage: (item: Message) => void;
   onSwipeReply: (item: Message) => void;
   onCallPress: (video?: boolean) => void;
+  onPressImage: (imageUrl: string) => void;
 }
 
 const MessageFeed = memo(function MessageFeed({
@@ -1153,6 +1455,7 @@ const MessageFeed = memo(function MessageFeed({
   onLongPressMessage,
   onSwipeReply,
   onCallPress,
+  onPressImage,
 }: MessageFeedProps) {
   const user = useMemo(
     () => ({ _id: currentUserId, name: currentUserName, avatar: currentUserAvatar }),
@@ -1172,12 +1475,14 @@ const MessageFeed = memo(function MessageFeed({
       }
 
       if (isSelectionMode) {
+        const isItemDeleted = !!item?.deletedAt;
         return (
           <TouchableOpacity
             key={messageKey}
-            activeOpacity={0.75}
+            activeOpacity={isItemDeleted ? 1 : 0.75}
+            disabled={isItemDeleted}
             onPress={() => {
-              if (item) {
+              if (item && !item.deletedAt) {
                 onPressMessage(item);
               }
             }}
@@ -1276,6 +1581,35 @@ const MessageFeed = memo(function MessageFeed({
       const ringStatus: ChronoRingStatus = isPending ? "pending" : isRead ? "read" : "sent";
       const isSelected = selectedMessageIds.has(item.id);
 
+      if (item.type === "IMAGE") {
+        return (
+          <ImageBubble
+            item={item}
+            isMe={isMe}
+            showSenderName={showSenderName}
+            status={ringStatus}
+            isSelected={isSelected}
+            isSelectionMode={isSelectionMode}
+            onPressImage={onPressImage}
+            onLongPress={onLongPressMessage}
+          />
+        );
+      }
+
+      if (item.type === "AUDIO") {
+        return (
+          <AudioBubble
+            item={item}
+            isMe={isMe}
+            showSenderName={showSenderName}
+            status={ringStatus}
+            isSelected={isSelected}
+            isSelectionMode={isSelectionMode}
+            onLongPress={onLongPressMessage}
+          />
+        );
+      }
+
       return (
         <TextBubble
           item={item}
@@ -1300,6 +1634,7 @@ const MessageFeed = memo(function MessageFeed({
       onSwipeReply,
       onLongPressMessage,
       onCallPress,
+      onPressImage,
     ],
   );
 
@@ -1593,6 +1928,10 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: "#CBD5E1",
   },
+  deletedReplyTextInBubble: {
+    fontStyle: "italic",
+    opacity: 0.65,
+  },
   daySeparatorContainer: {
     alignItems: "center",
     justifyContent: "center",
@@ -1696,6 +2035,10 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: "#94A3B8",
   },
+  deletedActionBannerText: {
+    fontStyle: "italic",
+    color: "#64748B",
+  },
   inputContainer: {
     flexDirection: "row",
     alignItems: "flex-end",
@@ -1734,6 +2077,58 @@ const styles = StyleSheet.create({
     width: 46,
     height: 46,
     borderRadius: 23,
+    backgroundColor: "#2563EB",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  recordingContainer: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    backgroundColor: "#131B2E",
+    borderRadius: 24,
+    paddingHorizontal: 14,
+    height: 46,
+    borderWidth: 1,
+    borderColor: "rgba(239, 68, 68, 0.4)",
+  },
+  recordingLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  recordingRedDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: "#EF4444",
+  },
+  recordingTimerText: {
+    color: "#FFFFFF",
+    fontSize: 15,
+    fontWeight: "700",
+    fontVariant: ["tabular-nums"],
+  },
+  recordingHintText: {
+    color: "#94A3B8",
+    fontSize: 13,
+    marginLeft: 4,
+  },
+  recordingActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+  cancelRecordBtn: {
+    padding: 6,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  sendRecordBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     backgroundColor: "#2563EB",
     justifyContent: "center",
     alignItems: "center",

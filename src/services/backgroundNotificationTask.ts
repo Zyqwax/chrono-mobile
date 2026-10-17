@@ -1,15 +1,14 @@
+import { AppState } from 'react-native';
 import * as TaskManager from 'expo-task-manager';
 import * as Notifications from 'expo-notifications';
 import { callKeepService } from './callkeep';
 import { notificationService } from './notifications';
+import { cryptoService } from './cryptoService';
 import { useChatStore } from '../store/useChatStore';
 
 export const CHRONO_BG_NOTIFICATION_TASK = 'CHRONO_BG_NOTIFICATION_TASK';
 
 TaskManager.defineTask(CHRONO_BG_NOTIFICATION_TASK, async ({ data, executionInfo, error }: any) => {
-  // Geçici log: Gelen payload yapısını doğrulamak için ilk satırda yazdırılır
-  console.log('🔔 [CHRONO_BG_NOTIFICATION_TASK] Gelen veri:', JSON.stringify(data));
-
   if (error) {
     console.error('❌ [CHRONO_BG_NOTIFICATION_TASK] Task execution hatası:', error);
     return;
@@ -39,6 +38,12 @@ TaskManager.defineTask(CHRONO_BG_NOTIFICATION_TASK, async ({ data, executionInfo
       payload = { ...payload, ...payload.data };
     }
 
+    if (payload?.body && typeof payload.body === 'string' && payload.body.startsWith('{')) {
+      try {
+        payload = { ... JSON.parse(payload.body), ...payload };
+      } catch {}
+    }
+
     const type = payload?.type;
     const callId = payload?.callId;
     const roomId = payload?.roomId || '';
@@ -48,10 +53,6 @@ TaskManager.defineTask(CHRONO_BG_NOTIFICATION_TASK, async ({ data, executionInfo
       payload?.video === 'true' ||
       payload?.video === 1 ||
       payload?.video === '1';
-
-    console.log(
-      `🔔 [CHRONO_BG_NOTIFICATION_TASK] Çözümlendi -> type: ${type}, callId: ${callId}, callerName: ${callerName}, isVideo: ${isVideo}`,
-    );
 
     if (type === 'incoming_call' && callId) {
       // Arka planda store'u hazırla (uygulama açıldığında görüşme modalı hazır olsun)
@@ -80,14 +81,85 @@ TaskManager.defineTask(CHRONO_BG_NOTIFICATION_TASK, async ({ data, executionInfo
 
       // CallKeep ve Notifee ile arama çalmasını başlat (Set tabanlı dedupe çift girişi engeller)
       callKeepService.displayIncomingCall(callId, callerName, isVideo);
-      await notificationService.showCallNotification(callerName, isVideo, callId);
+      await notificationService.showCallNotification(callerName, isVideo, callId, roomId);
     } else if (type === 'call_cancelled' && callId) {
-      console.log(`🔔 [CHRONO_BG_NOTIFICATION_TASK] Arama iptal edildi, bildirim kaldırılıyor: ${callId}`);
-      await notificationService.dismissCallNotification(callId);
+      // Yalnızca gelen arama çalma bildirimini temizle
+      await notificationService.dismissCallNotification(callId, false);
+
       const chatStore = useChatStore.getState();
-      if (chatStore.activeCall?.callId === callId) {
-        chatStore.setActiveCall(null);
+      const currentCall = chatStore.activeCall;
+      if (currentCall && currentCall.callId === callId) {
+        if (currentCall.state === 'ringing') {
+          chatStore.setActiveCall(null);
+        }
       }
+    } else if (type === 'message' && roomId) {
+      // Uygulama şu an ön planda açıksa (active), bildirim gösterme
+      if (AppState.currentState === 'active') {
+        return;
+      }
+
+      const messageId = payload?.messageId ? String(payload.messageId) : undefined;
+      if (messageId && notificationService.hasNotifiedMessage(messageId)) {
+        return;
+      }
+
+      const senderName = payload?.senderName || payload?.title || 'Kullanıcı';
+      const senderAvatar = payload?.senderAvatar || null;
+      const roomName = payload?.roomName || senderName;
+      const roomType = payload?.roomType || 'DIRECT';
+      const roomIcon = payload?.roomIcon || null;
+      const messageType = payload?.messageType || 'TEXT';
+      const preview =
+        payload?.preview === undefined
+          ? true
+          : payload.preview === true || payload.preview === 'true';
+
+      let resolvedContent: string | null = payload?.content || null;
+
+      // E2EE şifreli mesaj ise cihazdaki özel anahtar ile arka planda çöz
+      if (
+        !resolvedContent &&
+        payload?.ciphertext &&
+        payload?.nonce &&
+        payload?.senderPublicKey
+      ) {
+        try {
+          const decrypted = await cryptoService.decryptMessage(
+            String(payload.ciphertext),
+            String(payload.nonce),
+            String(payload.senderPublicKey),
+          );
+          if (decrypted) {
+            resolvedContent = decrypted;
+          }
+        } catch (decErr) {
+          console.warn('[CHRONO_BG_NOTIFICATION_TASK] E2EE çözme uyarısı:', decErr);
+        }
+      }
+
+      if (!resolvedContent) {
+        resolvedContent = payload?.body || 'Yeni mesaj';
+      }
+
+      const timestamp = payload?.createdAt
+        ? new Date(payload.createdAt).getTime() || Date.now()
+        : Date.now();
+
+      await notificationService.showMessageNotification({
+        messageId,
+        roomId,
+        roomName,
+        roomType,
+        roomIcon,
+        senderId: payload?.senderId,
+        senderName,
+        senderAvatar,
+        messageType,
+        content: resolvedContent,
+        timestamp,
+        preview,
+      });
     }
   } catch (err) {
     console.error('❌ [CHRONO_BG_NOTIFICATION_TASK] Hata:', err);

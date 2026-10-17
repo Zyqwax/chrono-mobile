@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -17,24 +17,24 @@ import {
   TouchableWithoutFeedback,
   UIManager,
   View,
-} from 'react-native';
-import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Ionicons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
-import { api } from '../services/api';
-import { useChatStore } from '../store/useChatStore';
-import { registerForPushNotificationsAsync } from '../services/notifications';
-import { cryptoService } from '../services/cryptoService';
+} from "react-native";
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
+import { Ionicons } from "@expo/vector-icons";
+import { useRouter } from "expo-router";
+import { api } from "../services/api";
+import { useChatStore } from "../store/useChatStore";
+import { registerForPushNotificationsAsync } from "../services/notifications";
+import { cryptoService } from "../services/cryptoService";
 
 type AuthStage =
-  | 'CHECK_USERNAME'
-  | 'USER_NOT_FOUND'
-  | 'REGISTER_NAME'
-  | 'REGISTER_EMAIL'
-  | 'REGISTER_PASSWORD'
-  | 'REGISTER_PIN'
-  | 'ENTER_PASSWORD'
-  | 'ENTER_RECOVERY_PIN';
+  | "CHECK_USERNAME"
+  | "USER_NOT_FOUND"
+  | "REGISTER_NAME"
+  | "REGISTER_EMAIL"
+  | "REGISTER_PASSWORD"
+  | "REGISTER_PIN"
+  | "ENTER_PASSWORD"
+  | "ENTER_RECOVERY_PIN";
 
 interface FoundUser {
   id: string;
@@ -55,7 +55,7 @@ interface AuthInputCardProps {
   icon: React.ReactNode;
   isPassword?: boolean;
   keyboardType?: KeyboardTypeOptions;
-  autoCapitalize?: 'none' | 'sentences' | 'words' | 'characters';
+  autoCapitalize?: "none" | "sentences" | "words" | "characters";
   autoCorrect?: boolean;
   onSubmitEditing?: () => void;
   returnKeyType?: ReturnKeyTypeOptions;
@@ -69,11 +69,11 @@ const AuthInputCard: React.FC<AuthInputCardProps> = ({
   placeholder,
   icon,
   isPassword = false,
-  keyboardType = 'default',
-  autoCapitalize = 'none',
+  keyboardType = "default",
+  autoCapitalize = "none",
   autoCorrect = false,
   onSubmitEditing,
-  returnKeyType = 'done',
+  returnKeyType = "done",
   hasError = false,
 }) => {
   const [isFocused, setIsFocused] = useState(false);
@@ -81,31 +81,17 @@ const AuthInputCard: React.FC<AuthInputCardProps> = ({
   const inputRef = useRef<TextInput>(null);
 
   return (
-    <View
-      style={[
-        styles.inputCard,
-        isFocused && styles.inputCardFocused,
-        hasError && styles.inputCardError,
-      ]}
-    >
-      <TouchableOpacity
-        style={styles.iconBox}
-        activeOpacity={0.7}
-        onPress={() => inputRef.current?.focus()}
-      >
+    <View style={[styles.inputCard, isFocused && styles.inputCardFocused, hasError && styles.inputCardError]}>
+      <TouchableOpacity style={styles.iconBox} activeOpacity={0.7} onPress={() => inputRef.current?.focus()}>
         {icon}
       </TouchableOpacity>
 
       <View style={styles.inputInnerColumn}>
-        <Text
-          style={styles.inputTopLabel}
-          onPress={() => inputRef.current?.focus()}
-          suppressHighlighting
-        >
+        <Text style={styles.inputTopLabel} onPress={() => inputRef.current?.focus()} suppressHighlighting>
           {label}
         </Text>
         <TextInput
-          key={isPassword ? (showPassword ? 'pass-vis' : 'pass-sec') : 'plain-field'}
+          key={isPassword ? (showPassword ? "pass-vis" : "pass-sec") : "plain-field"}
           ref={inputRef}
           style={styles.textInputField}
           value={value}
@@ -116,8 +102,8 @@ const AuthInputCard: React.FC<AuthInputCardProps> = ({
           autoCorrect={autoCorrect}
           keyboardType={keyboardType}
           secureTextEntry={isPassword ? !showPassword : false}
-          textContentType={isPassword ? (keyboardType === 'number-pad' ? 'oneTimeCode' : 'password') : 'none'}
-          autoComplete={isPassword ? 'password' : 'off'}
+          textContentType={isPassword ? (keyboardType === "number-pad" ? "oneTimeCode" : "password") : "none"}
+          autoComplete={isPassword ? "password" : "off"}
           onFocus={() => setIsFocused(true)}
           onBlur={() => setIsFocused(false)}
           onSubmitEditing={onSubmitEditing}
@@ -132,11 +118,7 @@ const AuthInputCard: React.FC<AuthInputCardProps> = ({
           activeOpacity={0.7}
           hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
         >
-          <Ionicons
-            name={showPassword ? 'eye-off-outline' : 'eye-outline'}
-            size={20}
-            color="#94A3B8"
-          />
+          <Ionicons name={showPassword ? "eye-off-outline" : "eye-outline"} size={20} color="#94A3B8" />
         </TouchableOpacity>
       )}
     </View>
@@ -147,12 +129,12 @@ export const AuthScreen: React.FC = () => {
   const router = useRouter();
   const setAuth = useChatStore((s) => s.setAuth);
 
-  const [stage, setStage] = useState<AuthStage>('CHECK_USERNAME');
-  const [username, setUsername] = useState('');
-  const [password, setPassword] = useState('');
-  const [displayName, setDisplayName] = useState('');
-  const [email, setEmail] = useState('');
-  const [securityPin, setSecurityPin] = useState('');
+  const [stage, setStage] = useState<AuthStage>("CHECK_USERNAME");
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [displayName, setDisplayName] = useState("");
+  const [email, setEmail] = useState("");
+  const [securityPin, setSecurityPin] = useState("");
   const [pendingLoginResponse, setPendingLoginResponse] = useState<any>(null);
 
   const insets = useSafeAreaInsets();
@@ -163,10 +145,6 @@ export const AuthScreen: React.FC = () => {
   const [keyboardHeight, setKeyboardHeight] = useState(0);
 
   useEffect(() => {
-    if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
-      UIManager.setLayoutAnimationEnabledExperimental(true);
-    }
-
     const onShow = (e: any) => {
       const h = e?.endCoordinates?.height || 0;
       LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
@@ -180,8 +158,8 @@ export const AuthScreen: React.FC = () => {
       setIsKeyboardVisible(false);
     };
 
-    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
-    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const showEvent = Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
+    const hideEvent = Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
 
     const showSub = Keyboard.addListener(showEvent, onShow);
     const hideSub = Keyboard.addListener(hideEvent, onHide);
@@ -193,7 +171,7 @@ export const AuthScreen: React.FC = () => {
   }, []);
 
   const cleanUsername = (text: string) => {
-    return text.toLowerCase().replace(/[^a-z0-9_]/g, '');
+    return text.toLowerCase().replace(/[^a-z0-9_]/g, "");
   };
 
   // ---------------------------------------------------------------------------
@@ -204,29 +182,27 @@ export const AuthScreen: React.FC = () => {
     const clean = username.trim().toLowerCase();
 
     if (!clean) {
-      setError('Lütfen bir kullanıcı adı girin');
+      setError("Lütfen bir kullanıcı adı girin");
       return;
     }
     if (clean.length < 3 || clean.length > 20) {
-      setError('Kullanıcı adı 3 ile 20 karakter arasında olmalıdır');
+      setError("Kullanıcı adı 3 ile 20 karakter arasında olmalıdır");
       return;
     }
 
     try {
       setLoading(true);
-      const res = await api.post('/auth/check-user', { identifier: clean });
+      const res = await api.post("/auth/check-user", { identifier: clean });
 
       if (res.data?.exists && res.data?.user) {
         setFoundUser(res.data.user);
-        setPassword('');
-        setStage('ENTER_PASSWORD');
+        setPassword("");
+        setStage("ENTER_PASSWORD");
       } else {
-        setStage('USER_NOT_FOUND');
+        setStage("USER_NOT_FOUND");
       }
     } catch (err: any) {
-      const msg =
-        err.response?.data?.message ||
-        'Sunucuya ulaşılamadı. Lütfen bağlantınızı kontrol edin.';
+      const msg = err.response?.data?.message || "Sunucuya ulaşılamadı. Lütfen bağlantınızı kontrol edin.";
       setError(msg);
     } finally {
       setLoading(false);
@@ -239,7 +215,7 @@ export const AuthScreen: React.FC = () => {
   const handleLogin = async () => {
     setError(null);
     if (!password) {
-      setError('Lütfen şifrenizi girin');
+      setError("Lütfen şifrenizi girin");
       return;
     }
 
@@ -249,10 +225,10 @@ export const AuthScreen: React.FC = () => {
       try {
         pushToken = await registerForPushNotificationsAsync();
       } catch (tokenErr) {
-        console.warn('Login push token alma uyarısı:', tokenErr);
+        console.warn("Login push token alma uyarısı:", tokenErr);
       }
 
-      const res = await api.post('/auth/login', {
+      const res = await api.post("/auth/login", {
         identifier: username.trim(),
         password,
         pushToken,
@@ -264,16 +240,15 @@ export const AuthScreen: React.FC = () => {
       // Yeni cihaz durumu: Cihazda anahtar yoksa ve sunucuda şifreli yedek varsa PIN sor
       if (!hasKeys && keyBackup?.encryptedPrivateKey) {
         setPendingLoginResponse(res.data);
-        setSecurityPin('');
-        setStage('ENTER_RECOVERY_PIN');
+        setSecurityPin("");
+        setStage("ENTER_RECOVERY_PIN");
         return;
       }
 
       setAuth(res.data.user, res.data.accessToken);
-      router.replace('/(tabs)');
+      router.replace("/(tabs)");
     } catch (err: any) {
-      const msg =
-        err.response?.data?.message || 'Şifre hatalı. Lütfen tekrar deneyin.';
+      const msg = err.response?.data?.message || "Şifre hatalı. Lütfen tekrar deneyin.";
       setError(msg);
     } finally {
       setLoading(false);
@@ -286,7 +261,7 @@ export const AuthScreen: React.FC = () => {
   const handleRecoverPin = async () => {
     setError(null);
     if (!securityPin || securityPin.length < 6) {
-      setError('Lütfen 6 haneli güvenlik PIN kodunuzu girin');
+      setError("Lütfen 6 haneli güvenlik PIN kodunuzu girin");
       return;
     }
 
@@ -295,20 +270,20 @@ export const AuthScreen: React.FC = () => {
       const keyBackup = pendingLoginResponse?.keyBackup;
       if (!keyBackup) {
         setAuth(pendingLoginResponse.user, pendingLoginResponse.accessToken);
-        router.replace('/(tabs)');
+        router.replace("/(tabs)");
         return;
       }
 
       const success = await cryptoService.restoreKeyBackup(securityPin, keyBackup);
       if (!success) {
-        setError('Hatalı PIN kodu! Geçmiş mesajlarınız çözülemedi. Lütfen tekrar deneyin.');
+        setError("Hatalı PIN kodu! Geçmiş mesajlarınız çözülemedi. Lütfen tekrar deneyin.");
         return;
       }
 
       setAuth(pendingLoginResponse.user, pendingLoginResponse.accessToken);
-      router.replace('/(tabs)');
+      router.replace("/(tabs)");
     } catch (err: any) {
-      setError(err?.message || 'Anahtar kurtarma sırasında bir hata oluştu.');
+      setError(err?.message || "Anahtar kurtarma sırasında bir hata oluştu.");
     } finally {
       setLoading(false);
     }
@@ -320,30 +295,30 @@ export const AuthScreen: React.FC = () => {
   const handleNextFromDisplayName = () => {
     setError(null);
     if (!displayName.trim()) {
-      setError('Lütfen bir görünen ad girin');
+      setError("Lütfen bir görünen ad girin");
       return;
     }
-    setStage('REGISTER_EMAIL');
+    setStage("REGISTER_EMAIL");
   };
 
   const handleNextFromEmail = () => {
     setError(null);
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(email.trim())) {
-      setError('Geçerli bir e-posta adresi girin');
+      setError("Geçerli bir e-posta adresi girin");
       return;
     }
-    setStage('REGISTER_PASSWORD');
+    setStage("REGISTER_PASSWORD");
   };
 
   const handleNextFromPassword = () => {
     setError(null);
     if (!password || password.length < 6) {
-      setError('Şifre en az 6 karakter olmalıdır');
+      setError("Şifre en az 6 karakter olmalıdır");
       return;
     }
-    setSecurityPin('');
-    setStage('REGISTER_PIN');
+    setSecurityPin("");
+    setStage("REGISTER_PIN");
   };
 
   // ---------------------------------------------------------------------------
@@ -352,7 +327,7 @@ export const AuthScreen: React.FC = () => {
   const handleCompleteRegisterWithPin = async () => {
     setError(null);
     if (!securityPin || securityPin.length < 6) {
-      setError('Lütfen en az 6 haneli bir Güvenlik PIN kodu belirleyin');
+      setError("Lütfen en az 6 haneli bir Güvenlik PIN kodu belirleyin");
       return;
     }
 
@@ -365,10 +340,10 @@ export const AuthScreen: React.FC = () => {
       try {
         pushToken = await registerForPushNotificationsAsync();
       } catch (tokenErr) {
-        console.warn('Register push token alma uyarısı:', tokenErr);
+        console.warn("Register push token alma uyarısı:", tokenErr);
       }
 
-      const res = await api.post('/auth/register', {
+      const res = await api.post("/auth/register", {
         username: username.trim().toLowerCase(),
         displayName: displayName.trim(),
         email: email.trim().toLowerCase(),
@@ -381,10 +356,9 @@ export const AuthScreen: React.FC = () => {
       });
 
       setAuth(res.data.user, res.data.accessToken);
-      router.replace('/(tabs)');
+      router.replace("/(tabs)");
     } catch (err: any) {
-      const msg =
-        err.response?.data?.message || err?.message || 'Kayıt sırasında bir hata oluştu.';
+      const msg = err.response?.data?.message || err?.message || "Kayıt sırasında bir hata oluştu.";
       setError(msg);
     } finally {
       setLoading(false);
@@ -403,10 +377,10 @@ export const AuthScreen: React.FC = () => {
         style={styles.backCircleBtn}
         onPress={() => {
           setError(null);
-          if (currentStep === 1) setStage('USER_NOT_FOUND');
-          else if (currentStep === 2) setStage('REGISTER_NAME');
-          else if (currentStep === 3) setStage('REGISTER_EMAIL');
-          else if (currentStep === 4) setStage('REGISTER_PASSWORD');
+          if (currentStep === 1) setStage("USER_NOT_FOUND");
+          else if (currentStep === 2) setStage("REGISTER_NAME");
+          else if (currentStep === 3) setStage("REGISTER_EMAIL");
+          else if (currentStep === 4) setStage("REGISTER_PASSWORD");
         }}
         activeOpacity={0.7}
       >
@@ -429,12 +403,12 @@ export const AuthScreen: React.FC = () => {
   // ---------------------------------------------------------------------------
   const renderStageTopContent = () => {
     switch (stage) {
-      case 'CHECK_USERNAME':
+      case "CHECK_USERNAME":
         return (
           <View style={styles.stageContent}>
             <View style={styles.smallLogoBadge}>
               <Image
-                source={require('../../assets/app-icon-rounded.png')}
+                source={require("../../assets/app-icon-rounded.png")}
                 style={styles.smallLogoImage}
                 resizeMode="cover"
               />
@@ -442,7 +416,7 @@ export const AuthScreen: React.FC = () => {
 
             <Text style={styles.stageTitle}>Tekrar hoş geldin</Text>
             <Text style={styles.stageSubtitle}>
-              Devam etmek için kullanıcı adını yaz. Hesabın{'\n'}yoksa birlikte oluşturalım.
+              Devam etmek için kullanıcı adını yaz. Hesabın{"\n"}yoksa birlikte oluşturalım.
             </Text>
 
             <AuthInputCard
@@ -467,7 +441,7 @@ export const AuthScreen: React.FC = () => {
           </View>
         );
 
-      case 'USER_NOT_FOUND':
+      case "USER_NOT_FOUND":
         return (
           <View style={[styles.stageContent, styles.notFoundCenterContent]}>
             <View style={styles.goldIconContainer}>
@@ -477,13 +451,13 @@ export const AuthScreen: React.FC = () => {
             <Text style={styles.notFoundTitle}>Seni henüz tanımıyoruz</Text>
 
             <Text style={styles.notFoundSubtitle}>
-              <Text style={styles.highlightedUsername}>@{username}</Text> adına ait bir hesap
-              bulunamadı. Bu kullanıcı adıyla hemen yeni bir Chrono hesabı oluşturabilirsin.
+              <Text style={styles.highlightedUsername}>@{username}</Text> adına ait bir hesap bulunamadı. Bu kullanıcı
+              adıyla hemen yeni bir Chrono hesabı oluşturabilirsin.
             </Text>
           </View>
         );
 
-      case 'REGISTER_NAME':
+      case "REGISTER_NAME":
         return (
           <View style={styles.stageContent}>
             {renderStepperHeader(1)}
@@ -494,7 +468,7 @@ export const AuthScreen: React.FC = () => {
 
             <Text style={styles.stageTitle}>Sana nasıl seslenelim?</Text>
             <Text style={styles.stageSubtitle}>
-              Sohbet odalarında diğer kullanıcıların göreceği{'\n'}görünen adını yaz.
+              Sohbet odalarında diğer kullanıcıların göreceği{"\n"}görünen adını yaz.
             </Text>
 
             <AuthInputCard
@@ -516,7 +490,7 @@ export const AuthScreen: React.FC = () => {
           </View>
         );
 
-      case 'REGISTER_EMAIL':
+      case "REGISTER_EMAIL":
         return (
           <View style={styles.stageContent}>
             {renderStepperHeader(2)}
@@ -526,9 +500,7 @@ export const AuthScreen: React.FC = () => {
             </View>
 
             <Text style={styles.stageTitle}>E-posta adresin</Text>
-            <Text style={styles.stageSubtitle}>
-              Hesap güvenliği ve kurtarma için geçerli bir e-posta adresi gir.
-            </Text>
+            <Text style={styles.stageSubtitle}>Hesap güvenliği ve kurtarma için geçerli bir e-posta adresi gir.</Text>
 
             <AuthInputCard
               key="stage-register-email"
@@ -552,7 +524,7 @@ export const AuthScreen: React.FC = () => {
           </View>
         );
 
-      case 'REGISTER_PASSWORD':
+      case "REGISTER_PASSWORD":
         return (
           <View style={styles.stageContent}>
             {renderStepperHeader(3)}
@@ -562,9 +534,7 @@ export const AuthScreen: React.FC = () => {
             </View>
 
             <Text style={styles.stageTitle}>Bir şifre belirle</Text>
-            <Text style={styles.stageSubtitle}>
-              Hesabını korumak için en az 6 karakterlik bir şifre{'\n'}oluştur.
-            </Text>
+            <Text style={styles.stageSubtitle}>Hesabını korumak için en az 6 karakterlik bir şifre{"\n"}oluştur.</Text>
 
             <AuthInputCard
               key="stage-register-password"
@@ -583,35 +553,20 @@ export const AuthScreen: React.FC = () => {
             />
 
             <View style={styles.passwordStrengthRow}>
+              <View style={[styles.strengthBar, isLengthValid ? styles.strengthBarFilled : styles.strengthBarEmpty]} />
               <View
-                style={[
-                  styles.strengthBar,
-                  isLengthValid ? styles.strengthBarFilled : styles.strengthBarEmpty,
-                ]}
+                style={[styles.strengthBar, hasLetterAndNumber ? styles.strengthBarFilled : styles.strengthBarEmpty]}
               />
-              <View
-                style={[
-                  styles.strengthBar,
-                  hasLetterAndNumber ? styles.strengthBarFilled : styles.strengthBarEmpty,
-                ]}
-              />
-              <View
-                style={[
-                  styles.strengthBar,
-                  isStrong ? styles.strengthBarFilled : styles.strengthBarEmpty,
-                ]}
-              />
+              <View style={[styles.strengthBar, isStrong ? styles.strengthBarFilled : styles.strengthBarEmpty]} />
             </View>
 
-            <Text style={styles.helperText}>
-              En az 6 karakter. Harf, rakam ve sembol karıştırmak{'\n'}güçlendirir.
-            </Text>
+            <Text style={styles.helperText}>En az 6 karakter. Harf, rakam ve sembol karıştırmak{"\n"}güçlendirir.</Text>
 
             {error && <Text style={styles.errorInlineText}>{error}</Text>}
           </View>
         );
 
-      case 'REGISTER_PIN':
+      case "REGISTER_PIN":
         return (
           <View style={styles.stageContent}>
             {renderStepperHeader(4)}
@@ -622,7 +577,8 @@ export const AuthScreen: React.FC = () => {
 
             <Text style={styles.stageTitle}>Kurtarma PIN'i Belirle</Text>
             <Text style={styles.stageSubtitle}>
-              Mesajlarınız uçtan uca şifrelenir. Cihaz değiştirdiğinizde geçmiş mesajlarınızı çözmek için 6 haneli bu PIN kodunu kullanacaksınız.
+              Mesajlarınız uçtan uca şifrelenir. Cihaz değiştirdiğinizde geçmiş mesajlarınızı çözmek için 6 haneli bu
+              PIN kodunu kullanacaksınız.
             </Text>
 
             <AuthInputCard
@@ -630,7 +586,7 @@ export const AuthScreen: React.FC = () => {
               label="6 Haneli Güvenlik PIN'i"
               value={securityPin}
               onChangeText={(t) => {
-                const clean = t.replace(/[^0-9]/g, '').slice(0, 6);
+                const clean = t.replace(/[^0-9]/g, "").slice(0, 6);
                 setSecurityPin(clean);
                 if (error) setError(null);
               }}
@@ -644,14 +600,15 @@ export const AuthScreen: React.FC = () => {
             />
 
             <Text style={styles.helperText}>
-              🔒 Bu PIN kodunu güvenli bir yerde saklayın. Sıfır-bilgi (Zero-Knowledge) mimarisi nedeniyle sunucu bile bu PIN'i göremez.
+              🔒 Bu PIN kodunu güvenli bir yerde saklayın. Sıfır-bilgi (Zero-Knowledge) mimarisi nedeniyle sunucu bile
+              bu PIN'i göremez.
             </Text>
 
             {error && <Text style={styles.errorInlineText}>{error}</Text>}
           </View>
         );
 
-      case 'ENTER_PASSWORD':
+      case "ENTER_PASSWORD":
         return (
           <View style={styles.stageContent}>
             <View style={styles.loginHeaderBar}>
@@ -659,7 +616,7 @@ export const AuthScreen: React.FC = () => {
                 style={styles.backCircleBtn}
                 onPress={() => {
                   setError(null);
-                  setStage('CHECK_USERNAME');
+                  setStage("CHECK_USERNAME");
                 }}
                 activeOpacity={0.7}
               >
@@ -668,7 +625,7 @@ export const AuthScreen: React.FC = () => {
 
               <View style={styles.smallHeaderLogo}>
                 <Image
-                  source={require('../../assets/app-icon-rounded.png')}
+                  source={require("../../assets/app-icon-rounded.png")}
                   style={styles.smallLogoImage}
                   resizeMode="cover"
                 />
@@ -681,16 +638,14 @@ export const AuthScreen: React.FC = () => {
               ) : (
                 <View style={styles.userAvatarFallback}>
                   <Text style={styles.userAvatarText}>
-                    {(foundUser?.displayName || foundUser?.username || 'U')
-                      .charAt(0)
-                      .toUpperCase()}
+                    {(foundUser?.displayName || foundUser?.username || "U").charAt(0).toUpperCase()}
                   </Text>
                 </View>
               )}
 
               <View style={styles.userFoundInfo}>
                 <Text style={styles.userFoundDisplayName} numberOfLines={1}>
-                  {foundUser?.displayName || 'Kullanıcı'}
+                  {foundUser?.displayName || "Kullanıcı"}
                 </Text>
                 <Text style={styles.userFoundUsername} numberOfLines={1}>
                   @{foundUser?.username || username}
@@ -701,7 +656,7 @@ export const AuthScreen: React.FC = () => {
                 style={styles.changeUserBtn}
                 onPress={() => {
                   setError(null);
-                  setStage('CHECK_USERNAME');
+                  setStage("CHECK_USERNAME");
                 }}
                 activeOpacity={0.7}
               >
@@ -710,9 +665,7 @@ export const AuthScreen: React.FC = () => {
             </View>
 
             <Text style={styles.stageTitle}>Tekrar hoş geldin</Text>
-            <Text style={styles.stageSubtitle}>
-              Hesabına giriş yapmak için şifreni gir.
-            </Text>
+            <Text style={styles.stageSubtitle}>Hesabına giriş yapmak için şifreni gir.</Text>
 
             <AuthInputCard
               key="stage-enter-password"
@@ -734,8 +687,8 @@ export const AuthScreen: React.FC = () => {
               style={styles.forgotPasswordBtn}
               onPress={() =>
                 Alert.alert(
-                  'Şifre Sıfırlama',
-                  'Şifrenizi sıfırlamak için lütfen sistem yöneticisi ile iletişime geçin.',
+                  "Şifre Sıfırlama",
+                  "Şifrenizi sıfırlamak için lütfen sistem yöneticisi ile iletişime geçin.",
                 )
               }
               activeOpacity={0.7}
@@ -747,7 +700,7 @@ export const AuthScreen: React.FC = () => {
           </View>
         );
 
-      case 'ENTER_RECOVERY_PIN':
+      case "ENTER_RECOVERY_PIN":
         return (
           <View style={styles.stageContent}>
             <View style={styles.loginHeaderBar}>
@@ -756,7 +709,7 @@ export const AuthScreen: React.FC = () => {
                 onPress={() => {
                   setError(null);
                   setPendingLoginResponse(null);
-                  setStage('ENTER_PASSWORD');
+                  setStage("ENTER_PASSWORD");
                 }}
                 activeOpacity={0.7}
               >
@@ -765,7 +718,7 @@ export const AuthScreen: React.FC = () => {
 
               <View style={styles.smallHeaderLogo}>
                 <Image
-                  source={require('../../assets/app-icon-rounded.png')}
+                  source={require("../../assets/app-icon-rounded.png")}
                   style={styles.smallLogoImage}
                   resizeMode="cover"
                 />
@@ -778,16 +731,14 @@ export const AuthScreen: React.FC = () => {
               ) : (
                 <View style={styles.userAvatarFallback}>
                   <Text style={styles.userAvatarText}>
-                    {(foundUser?.displayName || foundUser?.username || 'U')
-                      .charAt(0)
-                      .toUpperCase()}
+                    {(foundUser?.displayName || foundUser?.username || "U").charAt(0).toUpperCase()}
                   </Text>
                 </View>
               )}
 
               <View style={styles.userFoundInfo}>
                 <Text style={styles.userFoundDisplayName} numberOfLines={1}>
-                  {foundUser?.displayName || 'Kullanıcı'}
+                  {foundUser?.displayName || "Kullanıcı"}
                 </Text>
                 <Text style={styles.userFoundUsername} numberOfLines={1}>
                   @{foundUser?.username || username}
@@ -797,7 +748,8 @@ export const AuthScreen: React.FC = () => {
 
             <Text style={styles.stageTitle}>Kurtarma PIN'inizi Girin</Text>
             <Text style={styles.stageSubtitle}>
-              Yeni bir cihazdan giriş yapıyorsunuz. Uçtan uca şifreli geçmiş mesajlarınızı çözmek için 6 haneli Güvenlik PIN'inizi girin.
+              Yeni bir cihazdan giriş yapıyorsunuz. Uçtan uca şifreli geçmiş mesajlarınızı çözmek için 6 haneli Güvenlik
+              PIN'inizi girin.
             </Text>
 
             <AuthInputCard
@@ -805,7 +757,7 @@ export const AuthScreen: React.FC = () => {
               label="6 Haneli Güvenlik PIN'i"
               value={securityPin}
               onChangeText={(t) => {
-                const clean = t.replace(/[^0-9]/g, '').slice(0, 6);
+                const clean = t.replace(/[^0-9]/g, "").slice(0, 6);
                 setSecurityPin(clean);
                 if (error) setError(null);
               }}
@@ -819,7 +771,8 @@ export const AuthScreen: React.FC = () => {
             />
 
             <Text style={styles.helperText}>
-              🔑 Bu PIN kodu cihazınızda özel anahtarınızı (X25519) çözecek ve sunucudaki geçmiş mesajlarınızı okunabilir yapacaktır.
+              🔑 Bu PIN kodu cihazınızda özel anahtarınızı (X25519) çözecek ve sunucudaki geçmiş mesajlarınızı
+              okunabilir yapacaktır.
             </Text>
 
             {error && <Text style={styles.errorInlineText}>{error}</Text>}
@@ -833,7 +786,7 @@ export const AuthScreen: React.FC = () => {
   // ---------------------------------------------------------------------------
   const renderStageBottomContent = () => {
     switch (stage) {
-      case 'CHECK_USERNAME':
+      case "CHECK_USERNAME":
         return (
           <>
             <TouchableOpacity
@@ -856,21 +809,21 @@ export const AuthScreen: React.FC = () => {
 
             {!isKeyboardVisible && (
               <Text style={styles.disclaimerText}>
-                Devam ederek Kullanım Koşulları ve Gizlilik Politikası'nı kabul{'\n'}etmiş olursun.
+                Devam ederek Kullanım Koşulları ve Gizlilik Politikası'nı kabul{"\n"}etmiş olursun.
               </Text>
             )}
           </>
         );
 
-      case 'USER_NOT_FOUND':
+      case "USER_NOT_FOUND":
         return (
           <>
             <TouchableOpacity
               style={styles.actionBtn}
               onPress={() => {
                 setError(null);
-                setDisplayName('');
-                setStage('REGISTER_NAME');
+                setDisplayName("");
+                setStage("REGISTER_NAME");
               }}
               activeOpacity={0.85}
             >
@@ -884,7 +837,7 @@ export const AuthScreen: React.FC = () => {
               style={styles.secondaryLinkBtn}
               onPress={() => {
                 setError(null);
-                setStage('CHECK_USERNAME');
+                setStage("CHECK_USERNAME");
               }}
               activeOpacity={0.7}
             >
@@ -893,13 +846,9 @@ export const AuthScreen: React.FC = () => {
           </>
         );
 
-      case 'REGISTER_NAME':
+      case "REGISTER_NAME":
         return (
-          <TouchableOpacity
-            style={styles.actionBtn}
-            onPress={handleNextFromDisplayName}
-            activeOpacity={0.85}
-          >
+          <TouchableOpacity style={styles.actionBtn} onPress={handleNextFromDisplayName} activeOpacity={0.85}>
             <Text style={styles.actionBtnText}>İleri</Text>
             <View style={styles.actionBtnIconCircle}>
               <Ionicons name="arrow-forward" size={17} color="#FFFFFF" />
@@ -907,13 +856,9 @@ export const AuthScreen: React.FC = () => {
           </TouchableOpacity>
         );
 
-      case 'REGISTER_EMAIL':
+      case "REGISTER_EMAIL":
         return (
-          <TouchableOpacity
-            style={styles.actionBtn}
-            onPress={handleNextFromEmail}
-            activeOpacity={0.85}
-          >
+          <TouchableOpacity style={styles.actionBtn} onPress={handleNextFromEmail} activeOpacity={0.85}>
             <Text style={styles.actionBtnText}>İleri</Text>
             <View style={styles.actionBtnIconCircle}>
               <Ionicons name="arrow-forward" size={17} color="#FFFFFF" />
@@ -921,13 +866,9 @@ export const AuthScreen: React.FC = () => {
           </TouchableOpacity>
         );
 
-      case 'REGISTER_PASSWORD':
+      case "REGISTER_PASSWORD":
         return (
-          <TouchableOpacity
-            style={styles.actionBtn}
-            onPress={handleNextFromPassword}
-            activeOpacity={0.85}
-          >
+          <TouchableOpacity style={styles.actionBtn} onPress={handleNextFromPassword} activeOpacity={0.85}>
             <Text style={styles.actionBtnText}>İleri</Text>
             <View style={styles.actionBtnIconCircle}>
               <Ionicons name="arrow-forward" size={17} color="#FFFFFF" />
@@ -935,7 +876,7 @@ export const AuthScreen: React.FC = () => {
           </TouchableOpacity>
         );
 
-      case 'REGISTER_PIN':
+      case "REGISTER_PIN":
         return (
           <TouchableOpacity
             style={styles.actionBtn}
@@ -956,14 +897,9 @@ export const AuthScreen: React.FC = () => {
           </TouchableOpacity>
         );
 
-      case 'ENTER_PASSWORD':
+      case "ENTER_PASSWORD":
         return (
-          <TouchableOpacity
-            style={styles.actionBtn}
-            onPress={handleLogin}
-            disabled={loading}
-            activeOpacity={0.85}
-          >
+          <TouchableOpacity style={styles.actionBtn} onPress={handleLogin} disabled={loading} activeOpacity={0.85}>
             {loading ? (
               <ActivityIndicator color="#FFFFFF" />
             ) : (
@@ -977,14 +913,9 @@ export const AuthScreen: React.FC = () => {
           </TouchableOpacity>
         );
 
-      case 'ENTER_RECOVERY_PIN':
+      case "ENTER_RECOVERY_PIN":
         return (
-          <TouchableOpacity
-            style={styles.actionBtn}
-            onPress={handleRecoverPin}
-            disabled={loading}
-            activeOpacity={0.85}
-          >
+          <TouchableOpacity style={styles.actionBtn} onPress={handleRecoverPin} disabled={loading} activeOpacity={0.85}>
             {loading ? (
               <ActivityIndicator color="#FFFFFF" />
             ) : (
@@ -1001,33 +932,20 @@ export const AuthScreen: React.FC = () => {
   };
 
   return (
-    <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
-      <KeyboardAvoidingView
-        style={styles.keyboardRoot}
-        behavior={Platform.OS === 'ios' ? 'padding' : "height"}
-      >
+    <SafeAreaView style={styles.safeArea} edges={["top", "left", "right"]}>
+      <KeyboardAvoidingView style={styles.keyboardRoot} behavior={Platform.OS === "ios" ? "padding" : "height"}>
         <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
-          <View
-            style={[
-              styles.screenInner,
-
-            ]}
-          >
+          <View style={[styles.screenInner]}>
             <ScrollView
               style={styles.scrollArea}
-              contentContainerStyle={[
-                styles.scrollContent,
-                isKeyboardVisible && styles.scrollContentKeyboard,
-              ]}
+              contentContainerStyle={[styles.scrollContent, isKeyboardVisible && styles.scrollContentKeyboard]}
               keyboardShouldPersistTaps="handled"
               keyboardDismissMode="on-drag"
               showsVerticalScrollIndicator={false}
               bounces={false}
             >
               <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
-                <View style={styles.stageTopContentWrapper}>
-                  {renderStageTopContent()}
-                </View>
+                <View style={styles.stageTopContentWrapper}>{renderStageTopContent()}</View>
               </TouchableWithoutFeedback>
             </ScrollView>
 
@@ -1035,9 +953,7 @@ export const AuthScreen: React.FC = () => {
             <View
               style={[
                 styles.stageBottomPinned,
-                isKeyboardVisible
-                  ? styles.stageBottomPinnedKeyboard
-                  : { paddingBottom: Math.max(insets.bottom, 20) },
+                isKeyboardVisible ? styles.stageBottomPinnedKeyboard : { paddingBottom: Math.max(insets.bottom, 20) },
               ]}
             >
               {renderStageBottomContent()}
@@ -1052,14 +968,14 @@ export const AuthScreen: React.FC = () => {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: '#0B0F1A', // Chrono Deep Night
+    backgroundColor: "#0B0F1A", // Chrono Deep Night
   },
   keyboardRoot: {
     flex: 1,
   },
   screenInner: {
     flex: 1,
-    justifyContent: 'space-between',
+    justifyContent: "space-between",
   },
   scrollArea: {
     flex: 1,
@@ -1083,7 +999,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
     paddingTop: 14,
     paddingBottom: 24,
-    backgroundColor: '#0B0F1A',
+    backgroundColor: "#0B0F1A",
   },
   stageBottomPinnedKeyboard: {
     paddingTop: 8,
@@ -1095,36 +1011,36 @@ const styles = StyleSheet.create({
     width: 48,
     height: 48,
     borderRadius: 16,
-    overflow: 'hidden',
+    overflow: "hidden",
     marginTop: 10,
     marginBottom: 8,
     borderWidth: 1,
-    borderColor: 'rgba(56, 189, 248, 0.2)',
+    borderColor: "rgba(56, 189, 248, 0.2)",
   },
   smallLogoImage: {
-    width: '100%',
-    height: '100%',
+    width: "100%",
+    height: "100%",
   },
 
   // Stepper Header (1/3, 2/3, 3/3)
   stepperHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
     paddingTop: 4,
   },
   backCircleBtn: {
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: 'rgba(255, 255, 255, 0.06)',
-    alignItems: 'center',
-    justifyContent: 'center',
+    backgroundColor: "rgba(255, 255, 255, 0.06)",
+    alignItems: "center",
+    justifyContent: "center",
   },
   stepperBars: {
     flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     marginHorizontal: 16,
     gap: 6,
   },
@@ -1134,46 +1050,46 @@ const styles = StyleSheet.create({
     borderRadius: 2,
   },
   barActive: {
-    backgroundColor: '#2563EB',
+    backgroundColor: "#2563EB",
   },
   barInactive: {
-    backgroundColor: '#1E293B',
+    backgroundColor: "#1E293B",
   },
   stepCounterText: {
     fontSize: 14,
-    fontWeight: '600',
-    color: '#94A3B8',
+    fontWeight: "600",
+    color: "#94A3B8",
   },
 
   // @kullanıcı_adı Rozet Çipi
   usernameChip: {
-    alignSelf: 'flex-start',
+    alignSelf: "flex-start",
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 14,
-    backgroundColor: 'rgba(37, 99, 235, 0.12)',
+    backgroundColor: "rgba(37, 99, 235, 0.12)",
     borderWidth: 1,
-    borderColor: 'rgba(37, 99, 235, 0.25)',
+    borderColor: "rgba(37, 99, 235, 0.25)",
     marginTop: 22,
     marginBottom: 4,
   },
   usernameChipText: {
     fontSize: 13.5,
-    fontWeight: '700',
-    color: '#38BDF8',
+    fontWeight: "700",
+    color: "#38BDF8",
   },
 
   // Başlıklar
   stageTitle: {
     fontSize: 28,
-    fontWeight: '700',
-    color: '#FFFFFF',
+    fontWeight: "700",
+    color: "#FFFFFF",
     marginTop: 20,
     letterSpacing: 0.3,
   },
   stageSubtitle: {
     fontSize: 15,
-    color: '#94A3B8',
+    color: "#94A3B8",
     lineHeight: 22,
     marginTop: 8,
     marginBottom: 28,
@@ -1181,21 +1097,21 @@ const styles = StyleSheet.create({
 
   // Özel Çerçeveli Input Kartı (Screenshots 2, 4, 5, 6, 7)
   inputCard: {
-    width: '100%',
+    width: "100%",
     height: 72,
     borderRadius: 22,
-    backgroundColor: '#101726',
+    backgroundColor: "#101726",
     borderWidth: 1.5,
-    borderColor: 'rgba(255, 255, 255, 0.08)',
-    flexDirection: 'row',
-    alignItems: 'center',
+    borderColor: "rgba(255, 255, 255, 0.08)",
+    flexDirection: "row",
+    alignItems: "center",
     paddingHorizontal: 16,
   },
   inputCardFocused: {
-    borderColor: '#2563EB',
+    borderColor: "#2563EB",
     ...Platform.select({
       ios: {
-        shadowColor: '#2563EB',
+        shadowColor: "#2563EB",
         shadowOffset: { width: 0, height: 0 },
         shadowOpacity: 0.35,
         shadowRadius: 10,
@@ -1203,40 +1119,40 @@ const styles = StyleSheet.create({
     }),
   },
   inputCardError: {
-    borderColor: '#EF4444',
+    borderColor: "#EF4444",
   },
   iconBox: {
     width: 42,
     height: 42,
     borderRadius: 13,
-    backgroundColor: 'rgba(37, 99, 235, 0.12)',
-    alignItems: 'center',
-    justifyContent: 'center',
+    backgroundColor: "rgba(37, 99, 235, 0.12)",
+    alignItems: "center",
+    justifyContent: "center",
     marginRight: 14,
   },
   atSignText: {
     fontSize: 20,
-    fontWeight: '700',
-    color: '#38BDF8',
+    fontWeight: "700",
+    color: "#38BDF8",
   },
   inputInnerColumn: {
     flex: 1,
-    height: '100%',
-    justifyContent: 'center',
+    height: "100%",
+    justifyContent: "center",
     paddingVertical: 10,
   },
   inputTopLabel: {
     fontSize: 11,
-    fontWeight: '600',
-    color: '#94A3B8',
+    fontWeight: "600",
+    color: "#94A3B8",
     marginBottom: 2,
     letterSpacing: 0.2,
   },
   textInputField: {
     flex: 1,
     fontSize: 16,
-    fontWeight: '500',
-    color: '#FFFFFF',
+    fontWeight: "500",
+    color: "#FFFFFF",
     paddingVertical: 0,
     paddingHorizontal: 0,
     margin: 0,
@@ -1247,21 +1163,21 @@ const styles = StyleSheet.create({
   },
   helperText: {
     fontSize: 13,
-    color: '#64748B',
+    color: "#64748B",
     marginTop: 10,
     lineHeight: 18,
   },
   errorInlineText: {
     fontSize: 13,
-    color: '#F87171',
+    color: "#F87171",
     marginTop: 8,
-    fontWeight: '500',
+    fontWeight: "500",
   },
 
   // Şifre Gücü Çubukları (Screenshot 6)
   passwordStrengthRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     gap: 6,
     marginTop: 12,
   },
@@ -1271,91 +1187,91 @@ const styles = StyleSheet.create({
     borderRadius: 2,
   },
   strengthBarFilled: {
-    backgroundColor: '#2563EB',
+    backgroundColor: "#2563EB",
   },
   strengthBarEmpty: {
-    backgroundColor: '#1E293B',
+    backgroundColor: "#1E293B",
   },
 
   // User Not Found Sayfası (Screenshot 3)
   notFoundCenterContent: {
-    alignItems: 'center',
-    justifyContent: 'center',
+    alignItems: "center",
+    justifyContent: "center",
     paddingTop: 48,
   },
   goldIconContainer: {
     width: 78,
     height: 78,
     borderRadius: 26,
-    backgroundColor: 'rgba(245, 158, 11, 0.12)',
+    backgroundColor: "rgba(245, 158, 11, 0.12)",
     borderWidth: 1,
-    borderColor: 'rgba(245, 158, 11, 0.28)',
-    alignItems: 'center',
-    justifyContent: 'center',
+    borderColor: "rgba(245, 158, 11, 0.28)",
+    alignItems: "center",
+    justifyContent: "center",
     marginBottom: 28,
   },
   notFoundTitle: {
     fontSize: 26,
-    fontWeight: '700',
-    color: '#FFFFFF',
-    textAlign: 'center',
+    fontWeight: "700",
+    color: "#FFFFFF",
+    textAlign: "center",
   },
   notFoundSubtitle: {
     fontSize: 15,
-    color: '#94A3B8',
-    textAlign: 'center',
+    color: "#94A3B8",
+    textAlign: "center",
     lineHeight: 23,
     marginTop: 14,
     paddingHorizontal: 8,
   },
   highlightedUsername: {
-    color: '#38BDF8',
-    fontWeight: '700',
+    color: "#38BDF8",
+    fontWeight: "700",
   },
   secondaryLinkBtn: {
     paddingVertical: 14,
-    alignItems: 'center',
-    justifyContent: 'center',
+    alignItems: "center",
+    justifyContent: "center",
     marginTop: 6,
   },
   secondaryLinkText: {
-    color: '#FFFFFF',
+    color: "#FFFFFF",
     fontSize: 15,
-    fontWeight: '600',
+    fontWeight: "600",
   },
 
   // Login Header & Bulunan Kullanıcı Kartı (Screenshot 7)
   loginHeaderBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
     paddingTop: 4,
   },
   smallHeaderLogo: {
     width: 42,
     height: 42,
     borderRadius: 14,
-    overflow: 'hidden',
+    overflow: "hidden",
     borderWidth: 1,
-    borderColor: 'rgba(56, 189, 248, 0.2)',
+    borderColor: "rgba(56, 189, 248, 0.2)",
   },
   userFoundCard: {
-    backgroundColor: '#101726',
+    backgroundColor: "#101726",
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.08)',
+    borderColor: "rgba(255, 255, 255, 0.08)",
     borderRadius: 22,
     padding: 14,
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     marginTop: 24,
   },
   userAvatarFallback: {
     width: 48,
     height: 48,
     borderRadius: 24,
-    backgroundColor: '#2563EB',
-    alignItems: 'center',
-    justifyContent: 'center',
+    backgroundColor: "#2563EB",
+    alignItems: "center",
+    justifyContent: "center",
   },
   userAvatarImage: {
     width: 48,
@@ -1363,9 +1279,9 @@ const styles = StyleSheet.create({
     borderRadius: 24,
   },
   userAvatarText: {
-    color: '#FFFFFF',
+    color: "#FFFFFF",
     fontSize: 19,
-    fontWeight: '700',
+    fontWeight: "700",
   },
   userFoundInfo: {
     flex: 1,
@@ -1373,76 +1289,76 @@ const styles = StyleSheet.create({
   },
   userFoundDisplayName: {
     fontSize: 16,
-    fontWeight: '700',
-    color: '#FFFFFF',
+    fontWeight: "700",
+    color: "#FFFFFF",
   },
   userFoundUsername: {
     fontSize: 13.5,
-    color: '#38BDF8',
+    color: "#38BDF8",
     marginTop: 2,
-    fontWeight: '500',
+    fontWeight: "500",
   },
   changeUserBtn: {
     paddingHorizontal: 14,
     paddingVertical: 8,
     borderRadius: 16,
-    backgroundColor: 'rgba(255, 255, 255, 0.07)',
+    backgroundColor: "rgba(255, 255, 255, 0.07)",
   },
   changeUserBtnText: {
-    color: '#FFFFFF',
+    color: "#FFFFFF",
     fontSize: 13,
-    fontWeight: '600',
+    fontWeight: "600",
   },
   forgotPasswordBtn: {
     marginTop: 16,
-    alignSelf: 'flex-start',
+    alignSelf: "flex-start",
   },
   forgotPasswordText: {
     fontSize: 14,
-    fontWeight: '500',
-    color: '#94A3B8',
+    fontWeight: "500",
+    color: "#94A3B8",
   },
 
   // Alt Butonlar
   stageBottom: {
-    width: '100%',
+    width: "100%",
   },
   actionBtn: {
-    width: '100%',
+    width: "100%",
     height: 58,
     borderRadius: 29,
-    backgroundColor: '#2563EB',
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
+    backgroundColor: "#2563EB",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
     paddingHorizontal: 20,
-    shadowColor: '#2563EB',
+    shadowColor: "#2563EB",
     shadowOffset: { width: 0, height: 6 },
     shadowOpacity: 0.4,
     shadowRadius: 14,
     elevation: 8,
   },
   actionBtnText: {
-    color: '#FFFFFF',
+    color: "#FFFFFF",
     fontSize: 16,
-    fontWeight: '700',
+    fontWeight: "700",
     letterSpacing: 0.2,
     flex: 1,
-    textAlign: 'center',
+    textAlign: "center",
     marginLeft: 36,
   },
   actionBtnIconCircle: {
     width: 36,
     height: 36,
     borderRadius: 18,
-    backgroundColor: 'rgba(255, 255, 255, 0.22)',
-    alignItems: 'center',
-    justifyContent: 'center',
+    backgroundColor: "rgba(255, 255, 255, 0.22)",
+    alignItems: "center",
+    justifyContent: "center",
   },
   disclaimerText: {
     fontSize: 12,
-    color: '#64748B',
-    textAlign: 'center',
+    color: "#64748B",
+    textAlign: "center",
     lineHeight: 18,
     marginTop: 14,
   },

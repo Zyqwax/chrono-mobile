@@ -39,27 +39,19 @@ const { width: SCREEN_WIDTH } = Dimensions.get("window");
 export default function ProfileScreen() {
   const router = useRouter();
 
-  const {
-    currentUser,
-    settings,
-    fetchSettings,
-    updateSettings,
-    updateProfile,
-    uploadAvatar,
-    removeAvatar,
-    logout,
-  } = useChatStore(
-    useShallow((s) => ({
-      currentUser: s.currentUser,
-      settings: s.settings,
-      fetchSettings: s.fetchSettings,
-      updateSettings: s.updateSettings,
-      updateProfile: s.updateProfile,
-      uploadAvatar: s.uploadAvatar,
-      removeAvatar: s.removeAvatar,
-      logout: s.logout,
-    })),
-  );
+  const { currentUser, settings, fetchSettings, updateSettings, updateProfile, uploadAvatar, removeAvatar, logout } =
+    useChatStore(
+      useShallow((s) => ({
+        currentUser: s.currentUser,
+        settings: s.settings,
+        fetchSettings: s.fetchSettings,
+        updateSettings: s.updateSettings,
+        updateProfile: s.updateProfile,
+        uploadAvatar: s.uploadAvatar,
+        removeAvatar: s.removeAvatar,
+        logout: s.logout,
+      })),
+    );
 
   // Modalların State'leri
   const [editProfileVisible, setEditProfileVisible] = useState(false);
@@ -210,17 +202,20 @@ export default function ProfileScreen() {
       {/* ------------------------------------------------------------- */}
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Ayarlar</Text>
-        <TouchableOpacity
-          style={styles.searchBtn}
-          onPress={() => setIsSearchActive((prev) => !prev)}
-          activeOpacity={0.7}
-        >
-          <Ionicons
-            name={isSearchActive ? "close" : "search"}
-            size={22}
-            color={isSearchActive ? "#38BDF8" : "#FFFFFF"}
-          />
-        </TouchableOpacity>
+        <View style={styles.headerActions}>
+          <TouchableOpacity
+            style={styles.headerActionBtn}
+            onPress={() => setIsSearchActive((prev) => !prev)}
+            activeOpacity={0.7}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          >
+            <Ionicons
+              name={isSearchActive ? "close" : "search-outline"}
+              size={22}
+              color={isSearchActive ? "#38BDF8" : "#FFFFFF"}
+            />
+          </TouchableOpacity>
+        </View>
       </View>
 
       {/* Arama Alanı (Açıldığında filtreleme sağlar) */}
@@ -332,9 +327,7 @@ export default function ProfileScreen() {
               />
             </View>
             <Text style={styles.quickCardTitle}>Okundu bilgisi</Text>
-            <Text style={styles.quickCardSubtitle}>
-              {(settings?.readReceipts ?? true) ? "Açık" : "Kapalı"}
-            </Text>
+            <Text style={styles.quickCardSubtitle}>{(settings?.readReceipts ?? true) ? "Açık" : "Kapalı"}</Text>
           </View>
 
           {/* Kart 2: Kişisel Sohbet Bildirimleri */}
@@ -372,9 +365,7 @@ export default function ProfileScreen() {
               />
             </View>
             <Text style={styles.quickCardTitle}>Sohbet odaları</Text>
-            <Text style={styles.quickCardSubtitle}>
-              {(settings?.notifyRooms ?? true) ? "Bildirim açık" : "Kapalı"}
-            </Text>
+            <Text style={styles.quickCardSubtitle}>{(settings?.notifyRooms ?? true) ? "Bildirim açık" : "Kapalı"}</Text>
           </View>
 
           {/* Kart 4: Uygulama Sesleri */}
@@ -392,9 +383,7 @@ export default function ProfileScreen() {
               />
             </View>
             <Text style={styles.quickCardTitle}>Uygulama sesleri</Text>
-            <Text style={styles.quickCardSubtitle}>
-              {(settings?.inAppSounds ?? true) ? "Açık" : "Kapalı"}
-            </Text>
+            <Text style={styles.quickCardSubtitle}>{(settings?.inAppSounds ?? true) ? "Açık" : "Kapalı"}</Text>
           </View>
 
           {/* Kart 5: 24 Saat Biçimi */}
@@ -412,17 +401,11 @@ export default function ProfileScreen() {
               />
             </View>
             <Text style={styles.quickCardTitle}>24 saat biçimi</Text>
-            <Text style={styles.quickCardSubtitle}>
-              {(settings?.timeFormat24h ?? true) ? "Açık" : "Kapalı"}
-            </Text>
+            <Text style={styles.quickCardSubtitle}>{(settings?.timeFormat24h ?? true) ? "Açık" : "Kapalı"}</Text>
           </View>
 
           {/* Kart 6: Metin Boyutu (Sayfa 2 Bottom Sheet Açıcı) */}
-          <TouchableOpacity
-            style={styles.quickCard}
-            onPress={() => setTextSizeSheetVisible(true)}
-            activeOpacity={0.75}
-          >
+          <TouchableOpacity style={styles.quickCard} onPress={() => setTextSizeSheetVisible(true)} activeOpacity={0.75}>
             <View style={styles.quickCardHeader}>
               <View style={[styles.quickIconBox, styles.quickIconBoxAa]}>
                 <Text style={styles.quickIconTextAa}>Aa</Text>
@@ -611,11 +594,7 @@ export default function ProfileScreen() {
           </TouchableOpacity>
 
           {/* Hesabını Sil - Sayfa 5 Modalını Açar */}
-          <TouchableOpacity
-            style={styles.listRow}
-            onPress={() => setDeleteAccountVisible(true)}
-            activeOpacity={0.7}
-          >
+          <TouchableOpacity style={styles.listRow} onPress={() => setDeleteAccountVisible(true)} activeOpacity={0.7}>
             <View style={styles.listRowLeft}>
               <Ionicons name="trash-outline" size={20} color="#EF4444" style={{ marginRight: 14 }} />
               <Text style={[styles.listRowTitle, { color: "#EF4444" }]}>Hesabını sil</Text>
@@ -626,7 +605,7 @@ export default function ProfileScreen() {
 
         {/* Chrono Versiyon Bilgisi */}
         <Text style={styles.versionFooter}>
-          Chrono v{Constants.expoConfig?.version || '1.5.0'} ({Platform.OS === 'ios' ? Constants.expoConfig?.ios?.buildNumber || '6' : Constants.expoConfig?.android?.versionCode || 6}) · Uçtan Uca Şifreli İletişim
+          Chrono v{Constants.expoConfig?.version || "1.5.0"} · Uçtan Uca Şifreli İletişim
         </Text>
       </ScrollView>
 
@@ -714,17 +693,22 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    paddingHorizontal: 20,
+    paddingHorizontal: 16,
     paddingTop: 10,
     paddingBottom: 8,
   },
   headerTitle: {
-    fontSize: 26,
+    fontSize: 24,
     fontWeight: "700",
     color: "#FFFFFF",
-    letterSpacing: -0.4,
+    letterSpacing: -0.3,
   },
-  searchBtn: {
+  headerActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  headerActionBtn: {
     width: 38,
     height: 38,
     borderRadius: 19,

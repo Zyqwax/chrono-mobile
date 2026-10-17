@@ -28,7 +28,6 @@ import { useShallow } from 'zustand/react/shallow';
 import { formatCallPreview, formatListTimestamp, getTranslation } from '../utils/format';
 
 const { colors } = chronoTheme;
-const CHRONO_APP_ICON = require('../../assets/android-icon-foreground.png');
 
 interface RoomsListScreenProps {
   onSelectRoom: (room: Room) => void;
@@ -268,17 +267,10 @@ export const RoomsListScreen: React.FC<RoomsListScreenProps> = ({
       )}
 
       {/* ------------------------------------------------------------- */}
-      {/* Chrono Brand Header & Actions                                 */}
+      {/* Header & Actions                                              */}
       {/* ------------------------------------------------------------- */}
       <View style={styles.topBar}>
-        <View style={styles.brandRow}>
-          <Image
-            source={CHRONO_APP_ICON}
-            style={styles.brandIcon}
-            resizeMode="contain"
-          />
-          <Text style={styles.headerTitle}>Chrono</Text>
-        </View>
+        <Text style={styles.headerTitle}>Sohbetler</Text>
 
         <View style={styles.headerActions}>
           <TouchableOpacity
@@ -582,7 +574,13 @@ export const RoomsListScreen: React.FC<RoomsListScreenProps> = ({
 
                       <View style={styles.actionHighlightedFooter}>
                         <Text style={styles.actionHighlightedLastMsg} numberOfLines={1}>
-                          {selectedRoomForAction.lastMessage?.content || 'Henüz mesaj yok'}
+                          {selectedRoomForAction.lastMessage?.deletedAt
+                            ? 'Bu mesaj silindi'
+                            : selectedRoomForAction.lastMessage?.type === 'IMAGE'
+                              ? '📷 Fotoğraf'
+                              : selectedRoomForAction.lastMessage?.type === 'AUDIO'
+                                ? '🎤 Sesli mesaj'
+                                : selectedRoomForAction.lastMessage?.content || 'Henüz mesaj yok'}
                         </Text>
                         {selectedRoomForAction.unreadCount && selectedRoomForAction.unreadCount > 0 ? (
                           <View style={styles.actionHighlightedBadge}>
@@ -843,6 +841,10 @@ const RoomItem = memo(function RoomItem({
     !!lastMsg?.createdAt &&
     new Date(item.othersReadAt).getTime() >= new Date(lastMsg.createdAt).getTime();
 
+  const isCall = lastMsg?.type === 'CALL';
+  const isSystem = lastMsg?.type === 'SYSTEM';
+  const canShowProgressRing = isMine && !isCall && !isSystem && !lastMsg?.deletedAt && !hasActiveVoice;
+
   const handlePress = useCallback(() => onPress(item), [onPress, item]);
   const handleLongPress = useCallback(() => onLongPress(item), [onLongPress, item]);
 
@@ -860,7 +862,7 @@ const RoomItem = memo(function RoomItem({
         name={chatName}
         emoji={!isDirect && item.name?.startsWith('🔥') ? '🔥' : undefined}
         online={isPeerOnline}
-        badge={!isDirect && isLiveVoice ? 'mic' : 'none'}
+        badge={!isDirect && hasActiveVoice ? 'mic' : 'none'}
         style={{ marginRight: 14 }}
       />
 
@@ -886,12 +888,6 @@ const RoomItem = memo(function RoomItem({
           </View>
 
           <View style={styles.metaRight}>
-            {isMine && (
-              <ChronoProgressRing
-                status={isRead ? 'read' : 'sent'}
-                size={10}
-              />
-            )}
             <Text style={styles.timestamp}>
               {formatListTimestamp(item.lastMessageAt || item.updatedAt || item.createdAt)}
             </Text>
@@ -910,14 +906,36 @@ const RoomItem = memo(function RoomItem({
               </Text>
             </View>
           ) : (
-            <Text style={styles.lastMessageText} numberOfLines={1}>
-              {!isDirect && lastMsg?.sender?.displayName ? (
-                <Text style={styles.lastMessageSender}>{lastMsg.sender.displayName}: </Text>
-              ) : null}
-              {lastMsg?.type === 'CALL'
-                ? formatCallPreview(lastMsg.content, isMine)
-                : lastMsg?.content || (lastMsg?.ciphertext ? '🔒 Şifreli mesaj' : '')}
-            </Text>
+            <View style={styles.lastMessageContentRow}>
+              {canShowProgressRing && (
+                <View style={styles.lastMessageRingWrapper}>
+                  <ChronoProgressRing
+                    status={isRead ? 'read' : 'sent'}
+                    size={11}
+                  />
+                </View>
+              )}
+              <Text
+                style={[
+                  styles.lastMessageText,
+                  lastMsg?.deletedAt ? styles.deletedLastMessageText : null,
+                ]}
+                numberOfLines={1}
+              >
+                {!isDirect && lastMsg?.sender?.displayName && !lastMsg?.deletedAt ? (
+                  <Text style={styles.lastMessageSender}>{lastMsg.sender.displayName}: </Text>
+                ) : null}
+                {lastMsg?.deletedAt
+                  ? 'Bu mesaj silindi'
+                  : isCall
+                    ? formatCallPreview(lastMsg.content, isMine)
+                    : lastMsg?.type === 'IMAGE'
+                      ? '📷 Fotoğraf'
+                      : lastMsg?.type === 'AUDIO'
+                        ? '🎤 Sesli mesaj'
+                        : lastMsg?.content || (lastMsg?.ciphertext ? '🔒 Şifreli mesaj' : '')}
+              </Text>
+            </View>
           )}
 
           {/* Okunmamış veya Canlı Ses Rozeti */}
@@ -989,10 +1007,10 @@ const styles = StyleSheet.create({
     backgroundColor: colors.background,
   },
   headerTitle: {
-    fontSize: 22,
+    fontSize: 24,
     fontWeight: '700',
-    color: colors.textPrimary,
-    letterSpacing: 0.3,
+    color: '#FFFFFF',
+    letterSpacing: -0.3,
   },
   moreBtn: {
     width: 38,
@@ -1145,11 +1163,25 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
   },
+  lastMessageContentRow: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginRight: 10,
+  },
+  lastMessageRingWrapper: {
+    marginRight: 6,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
   lastMessageText: {
     color: colors.textSecondary,
     fontSize: 14,
     flex: 1,
-    marginRight: 10,
+  },
+  deletedLastMessageText: {
+    fontStyle: 'italic',
+    color: '#64748B',
   },
   lastMessageSender: {
     color: colors.primaryLight,
@@ -1194,16 +1226,6 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     fontSize: 10,
     fontWeight: '800',
-  },
-  brandRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-  },
-  brandIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 10,
   },
   headerActions: {
     flexDirection: 'row',

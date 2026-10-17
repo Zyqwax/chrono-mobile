@@ -1,4 +1,4 @@
-import { Room, RoomEvent, Track, type VideoTrack } from 'livekit-client';
+import { ConnectionState, Room, RoomEvent, Track, type VideoTrack } from 'livekit-client';
 import { AudioSession, AndroidAudioTypePresets } from '@livekit/react-native';
 
 let isLiveKitNativeReady = false;
@@ -20,6 +20,7 @@ export type VideoFacingMode = 'user' | 'environment';
 export type VideoTracksState = {
   local: VideoTrack | null;
   remote: VideoTrack | null;
+  remoteTracks: Record<string, VideoTrack>;
   facingMode: VideoFacingMode;
 };
 
@@ -27,15 +28,33 @@ type TrackChangeListener = (tracks: VideoTracksState) => void;
 
 class LiveKitService {
   private currentRoom: Room | null = null;
+  private isConnecting = false;
+  private isDisconnecting = false;
+  private connectedToken: string | null = null;
   private localVideoTrack: VideoTrack | null = null;
   private remoteVideoTrack: VideoTrack | null = null;
+  private remoteVideoTracks: Map<string, VideoTrack> = new Map();
   private cameraFacing: VideoFacingMode = 'user';
   private trackListeners: Set<TrackChangeListener> = new Set();
 
+  isConnectingOrConnected(): boolean {
+    return (
+      this.isConnecting ||
+      (!!this.currentRoom &&
+        (this.currentRoom.state === ConnectionState.Connected ||
+          this.currentRoom.state === ConnectionState.Connecting))
+    );
+  }
+
   getCurrentTracks(): VideoTracksState {
+    const remoteTracks: Record<string, VideoTrack> = {};
+    for (const [id, track] of this.remoteVideoTracks.entries()) {
+      remoteTracks[id] = track;
+    }
     return {
       local: this.localVideoTrack,
       remote: this.remoteVideoTrack,
+      remoteTracks,
       facingMode: this.cameraFacing,
     };
   }
@@ -63,10 +82,36 @@ class LiveKitService {
     });
   }
 
-  async connect(serverUrl: string, token: string, enableMic = true, enableCam = false): Promise<Room | null> {
+  async connect(
+    serverUrl: string,
+    token: string,
+    enableMic = true,
+    enableCam = false,
+  ): Promise<Room | null> {
+    // 1. Zaten bir bağlantı süreci işleniyorsa ikinci çağrıyı doğrudan engelle
+    if (this.isConnecting) {
+      console.log('⚠️ [LiveKitService] Zaten bir bağlantı süreci aktif, mükerrer connect engellendi.');
+      return this.currentRoom;
+    }
+
+    // 2. Eğer aynı token ile zaten bağlı veya bağlanıyorsa mevcut Room korunur
+    if (
+      this.currentRoom &&
+      this.connectedToken === token &&
+      (this.currentRoom.state === ConnectionState.Connected ||
+        this.currentRoom.state === ConnectionState.Connecting)
+    ) {
+      console.log('ℹ️ [LiveKitService] Aynı token ile zaten bağlı veya bağlanıyor, mevcut bağlantı korunuyor.');
+      return this.currentRoom;
+    }
+
+    // 3. Mevcut bir oda varsa ve farklı bir odaya geçiliyorsa önce temizle
     if (this.currentRoom) {
       await this.disconnect();
     }
+
+    this.isConnecting = true;
+    this.connectedToken = token;
 
     try {
       const room = new Room({
@@ -88,8 +133,20 @@ class LiveKitService {
 
       room.on(RoomEvent.Disconnected, () => {
         console.log('🔴 LiveKit odasından ayrıldı.');
-        this.localVideoTrack = null;
-        this.remoteVideoTrack = null;
+        if (this.currentRoom === room) {
+          this.connectedToken = null;
+          this.localVideoTrack = null;
+          this.remoteVideoTrack = null;
+          this.remoteVideoTracks.clear();
+          this.notifyTrackListeners();
+        }
+      });
+
+      // Uzak katılımcı odadan ayrıldığında
+      room.on(RoomEvent.ParticipantDisconnected, (participant) => {
+        console.log('👋 Katılımcı odadan ayrıldı:', participant.identity);
+        this.remoteVideoTracks.delete(participant.identity);
+        this.remoteVideoTrack = this.remoteVideoTracks.values().next().value || null;
         this.notifyTrackListeners();
       });
 
@@ -97,16 +154,28 @@ class LiveKitService {
       room.on(RoomEvent.TrackSubscribed, (track, publication, participant) => {
         if (track.kind === Track.Kind.Video) {
           console.log('📹 Uzak kamera yayını alındı:', participant.identity);
+          this.remoteVideoTracks.set(participant.identity, track as VideoTrack);
           this.remoteVideoTrack = track as VideoTrack;
           this.notifyTrackListeners();
         }
       });
 
       // Uzak katılımcı video akışını kapattığında
-      room.on(RoomEvent.TrackUnsubscribed, (track) => {
+      room.on(RoomEvent.TrackUnsubscribed, (track, publication, participant) => {
         if (track.kind === Track.Kind.Video) {
-          console.log('📹 Uzak kamera yayını kapandı');
-          this.remoteVideoTrack = null;
+          console.log('📹 Uzak kamera yayını kapandı:', (participant as any)?.identity);
+          const pIdentity = (participant as any)?.identity;
+          if (pIdentity) {
+            this.remoteVideoTracks.delete(pIdentity);
+          } else {
+            for (const [id, t] of this.remoteVideoTracks.entries()) {
+              if (t === track || (t as any)?.sid === (track as any)?.sid) {
+                this.remoteVideoTracks.delete(id);
+                break;
+              }
+            }
+          }
+          this.remoteVideoTrack = this.remoteVideoTracks.values().next().value || null;
           this.notifyTrackListeners();
         }
       });
@@ -128,24 +197,6 @@ class LiveKitService {
           this.notifyTrackListeners();
         }
       });
-
-      try {
-        await AudioSession.configureAudio({
-          android: {
-            audioTypeOptions: AndroidAudioTypePresets.communication,
-            preferredOutputList: enableCam
-              ? ['speaker', 'bluetooth', 'headset']
-              : ['earpiece', 'speaker', 'bluetooth', 'headset'],
-          },
-          ios: {
-            defaultOutput: enableCam ? 'speaker' : 'earpiece',
-          },
-        });
-        await AudioSession.startAudioSession();
-        console.log('🔊 LiveKit AudioSession başlatıldı (arama ses odaklaması devrede).');
-      } catch (audioErr) {
-        console.warn('AudioSession yapılandırma hatası:', audioErr);
-      }
 
       await room.connect(serverUrl, token);
 
@@ -169,19 +220,20 @@ class LiveKitService {
       for (const p of room.remoteParticipants.values()) {
         for (const pub of p.videoTrackPublications.values()) {
           if (pub.videoTrack) {
+            this.remoteVideoTracks.set(p.identity, pub.videoTrack);
             this.remoteVideoTrack = pub.videoTrack;
-            break;
           }
         }
-        if (this.remoteVideoTrack) break;
       }
 
       this.notifyTrackListeners();
-
       return room;
     } catch (err: any) {
-      console.warn('LiveKit bağlantı hatası:', err?.message);
+      console.warn('LiveKit bağlantı hatası:', err?.message || err);
+      this.connectedToken = null;
       return null;
+    } finally {
+      this.isConnecting = false;
     }
   }
 
@@ -232,24 +284,73 @@ class LiveKitService {
     }
   }
 
-  async disconnect() {
+  async selectAudioOutput(target: string) {
     try {
-      await AudioSession.stopAudioSession();
+      await AudioSession.selectAudioOutput(target);
+    } catch (err) {
+      console.warn('Ses çıkışı yönlendirme hatası:', err);
+    }
+  }
+
+  async getAudioOutputs(): Promise<string[]> {
+    try {
+      return await AudioSession.getAudioOutputs();
     } catch {
-      // yut
+      return [];
     }
-    if (this.currentRoom) {
+  }
+
+  async disconnect() {
+    if (this.isDisconnecting) return;
+    this.isDisconnecting = true;
+    this.isConnecting = false;
+    this.connectedToken = null;
+
+    const room = this.currentRoom;
+    this.currentRoom = null;
+
+    if (this.localVideoTrack) {
       try {
-        await this.currentRoom.disconnect();
-      } catch (err) {
-        console.warn('LiveKit bağlantı kesme hatası:', err);
-      }
-      this.currentRoom = null;
+        this.localVideoTrack.stop();
+      } catch {}
+      this.localVideoTrack = null;
     }
-    this.localVideoTrack = null;
+
+    if (room) {
+      try {
+        // Event dinleyicilerini hemen temizle ki erken abort veya kapatma esnasında
+        // 'cannot send signal request before connected, type: leave' ya da
+        // 'Cannot read property client of undefined' hataları oluşmasın
+        room.removeAllListeners();
+        // stopTracks = true ile yerel transceiver ve yayınlar derhal durdurulur
+        if (room.state === ConnectionState.Connected || room.state === ConnectionState.Connecting) {
+          await room.disconnect(true).catch((err: any) => {
+            // Teardown esnasında PC manager kapandığı için fırlayan NegotiationError'ı yakala
+            if (
+              err?.name === 'NegotiationError' ||
+              String(err?.message || err).includes('PC manager is closed')
+            ) {
+              return;
+            }
+            console.warn('LiveKit disconnect uyarısı:', err);
+          });
+        }
+      } catch (err: any) {
+        if (
+          err?.name === 'NegotiationError' ||
+          String(err?.message || err).includes('PC manager is closed')
+        ) {
+          // Teardown sırasında beklenen yarış durumu, güvenle yutulur
+        } else {
+          console.warn('LiveKit bağlantı kesme hatası:', err);
+        }
+      }
+    }
+
     this.remoteVideoTrack = null;
     this.cameraFacing = 'user';
     this.notifyTrackListeners();
+    this.isDisconnecting = false;
   }
 }
 

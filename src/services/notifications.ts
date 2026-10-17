@@ -1,16 +1,112 @@
 import * as Device from 'expo-device';
 import Constants from 'expo-constants';
 import * as Notifications from 'expo-notifications';
-import { Platform } from 'react-native';
+import { AppState, Platform } from 'react-native';
 import notifee, {
   AndroidCategory,
   AndroidImportance,
+  AndroidStyle,
   AndroidVisibility,
 } from '@notifee/react-native';
 import { foregroundServiceManager } from './foregroundService';
-import { useChatStore } from '../store/useChatStore';
 import { callSoundService } from './sound';
 import { callKeepService } from './callkeep';
+
+// Require cycle kırılması için Zustand store referansı dinamik çözümlenir
+const getChatStore = () => {
+  try {
+    return require('../store/useChatStore').useChatStore;
+  } catch {
+    return null;
+  }
+};
+
+export interface MessageNotificationOptions {
+  messageId?: string;
+  roomId: string;
+  roomName?: string;
+  roomType?: 'DIRECT' | 'ROOM' | string;
+  roomIcon?: string | null;
+  senderId?: string;
+  senderName: string;
+  senderAvatar?: string | null;
+  messageType?: 'TEXT' | 'IMAGE' | 'AUDIO' | 'SYSTEM' | string;
+  content?: string | null;
+  timestamp?: number;
+  preview?: boolean;
+}
+
+interface StackedMessageItem {
+  messageId?: string;
+  text: string;
+  timestamp: number;
+  senderName: string;
+  senderAvatar?: string;
+}
+
+const isValidHttpUrl = (url?: string | null): url is string => {
+  return typeof url === 'string' && (url.startsWith('http://') || url.startsWith('https://'));
+};
+
+/**
+ * Mesaj içeriğini WhatsApp / Telegram bildirim formatına dönüştürür.
+ * Ham Cloudinary URL'leri yerine "📷 Fotoğraf" veya "🎤 Sesli mesaj" gösterir.
+ */
+export function formatNotificationMessageText(
+  content?: string | null,
+  messageType?: string | null,
+  preview = true,
+): string {
+  if (!preview) {
+    return 'Yeni mesaj';
+  }
+
+  const normalizedType = (messageType || 'TEXT').toUpperCase();
+  if (normalizedType === 'IMAGE') {
+    return '📷 Fotoğraf';
+  }
+  if (normalizedType === 'AUDIO') {
+    return '🎤 Sesli mesaj';
+  }
+
+  const raw = (content || '').trim();
+  if (!raw) {
+    return 'Yeni mesaj';
+  }
+
+  // E2EE çözüldükten sonra içerik bir medya URL'si ise temiz etiket göster
+  if (raw.startsWith('http://') || raw.startsWith('https://')) {
+    const lower = raw.toLowerCase();
+    if (
+      lower.includes('/image/upload/') ||
+      lower.match(/\.(jpg|jpeg|png|webp|gif)(\?|$)/)
+    ) {
+      return '📷 Fotoğraf';
+    }
+    if (
+      lower.includes('/video/upload/') ||
+      lower.match(/\.(m4a|aac|mp3|wav|ogg|opus)(\?|$)/)
+    ) {
+      return '🎤 Sesli mesaj';
+    }
+  }
+
+  // Arama kaydı sistem mesajı kontrolü
+  if (raw.startsWith('__CALL_LOG__:')) {
+    try {
+      const data = JSON.parse(raw.replace('__CALL_LOG__:', ''));
+      const isVideo = Boolean(data?.video);
+      if (data?.status === 'missed' || data?.status === 'declined') {
+        return isVideo ? '📹 Cevapsız görüntülü arama' : '📞 Cevapsız sesli arama';
+      }
+      return isVideo ? '📹 Görüntülü arama' : '📞 Sesli arama';
+    } catch {
+      return '📞 Arama';
+    }
+  }
+
+  return raw;
+}
 
 // Uygulama açıkken bildirimlerin görünüm davranışı (Foreground Filtering / Çift Bildirim Engelleyici)
 Notifications.setNotificationHandler({
@@ -20,7 +116,6 @@ Notifications.setNotificationHandler({
     // 1. Arama bildirimleri (Notifee ve CallKeep tarafından yönetilir, Expo Notification bastırılır)
     if (data?.type === 'incoming_call' || data?.type === 'call_cancelled') {
       return {
-        shouldShowAlert: false,
         shouldShowBanner: false,
         shouldShowList: false,
         shouldPlaySound: false,
@@ -28,11 +123,15 @@ Notifications.setNotificationHandler({
       };
     }
 
-    // 2. Aktif oda kontrolü: Eğer kullanıcı o an bildirimin geldiği odayı açık tutuyorsa bildirimi ve sesi bastır
-    const activeRoomId = useChatStore?.getState?.()?.activeRoom?.id;
-    if (data?.roomId && activeRoomId === data.roomId) {
+    // 2. Sohbet mesajı bildirimleri:
+    // Uygulama açıkken (foreground) veya Android'de Notifee MessagingStyle kullanılırken
+    // Expo'nun ham push bildirimi ikinci kez göstermesini tamamen engelle!
+    if (
+      data?.type === 'message' ||
+      data?.roomId ||
+      AppState.currentState === 'active'
+    ) {
       return {
-        shouldShowAlert: false,
         shouldShowBanner: false,
         shouldShowList: false,
         shouldPlaySound: false,
@@ -44,7 +143,6 @@ Notifications.setNotificationHandler({
     const isSilent = Boolean(data?.isSilent || data?.type === 'active_call');
     if (isSilent) {
       return {
-        shouldShowAlert: false,
         shouldShowBanner: false,
         shouldShowList: true,
         shouldPlaySound: false,
@@ -52,15 +150,10 @@ Notifications.setNotificationHandler({
       };
     }
 
-    // 4. Diğer durumlarda banner/list göster, ses kullanıcı ayarına göre
-    const settings = useChatStore?.getState?.()?.settings;
-    const shouldPlaySound = settings?.inAppSounds ?? true;
-
     return {
-      shouldShowAlert: true,
-      shouldShowBanner: true,
-      shouldShowList: true,
-      shouldPlaySound,
+      shouldShowBanner: false,
+      shouldShowList: false,
+      shouldPlaySound: false,
       shouldSetBadge: false,
     };
   },
@@ -95,7 +188,6 @@ export async function registerForPushNotificationsAsync(): Promise<string | null
   }
 
   // Emülatör kontrolü: Emülatörlerde gerçek FCM/APNS token'ı üretilemez.
-  // Geliştirme ve test süreçlerinde DB'de push token'ın boş kalmaması için geçerli Expo formatında belirteç üretilir.
   if (!Device.isDevice) {
     const emulatorToken = `ExponentPushToken[emulator-${Platform.OS}-${(Device.modelName || 'device').replace(/[^a-zA-Z0-9]/g, '')}]`;
     console.log('📱 [Emulator] Emülatör tespit edildi, test Expo push token kullanılıyor:', emulatorToken);
@@ -139,16 +231,31 @@ class NotificationService {
   private isConfigured = false;
   private currentCallNotificationId: string | null = null;
   private callTimeouts = new Map<string, any>();
+  private activeRingingCallIds = new Set<string>();
+  private notifiedMessageIds = new Set<string>();
+  private roomMessagesHistory = new Map<string, StackedMessageItem[]>();
+
+  hasNotifiedMessage(messageId?: string | null): boolean {
+    if (!messageId) return false;
+    return this.notifiedMessageIds.has(messageId);
+  }
+
+  markMessageNotified(messageId?: string | null) {
+    if (!messageId) return;
+    this.notifiedMessageIds.add(messageId);
+    if (this.notifiedMessageIds.size > 300) {
+      const first = this.notifiedMessageIds.values().next().value;
+      if (first) this.notifiedMessageIds.delete(first);
+    }
+  }
 
   async init() {
     if (this.isConfigured) return;
 
     try {
       const { status: existingStatus } = await Notifications.getPermissionsAsync();
-      let finalStatus = existingStatus;
       if (existingStatus !== 'granted') {
-        const { status } = await Notifications.requestPermissionsAsync();
-        finalStatus = status;
+        await Notifications.requestPermissionsAsync();
       }
 
       if (Platform.OS === 'android') {
@@ -158,11 +265,40 @@ class NotificationService {
           await Notifications.deleteNotificationChannelAsync('ongoing_calls_channel');
           await Notifications.deleteNotificationChannelAsync('ongoing_calls_channel_v2');
           await notifee.deleteChannel('chrono_incoming_calls_v2').catch(() => {});
+          await notifee.deleteChannel('chrono_incoming_calls_v3').catch(() => {});
         } catch {
           // yut
         }
 
-        // 1. Sohbet Mesaj Bildirim Kanalı (En yüksek öncelik MAX & Titreşimli)
+        // 1. Notifee Sohbet Mesajları Kanalı (WhatsApp/Telegram MessagingStyle için)
+        await notifee.createChannel({
+          id: 'chrono_chat_messages_v2',
+          name: 'Sohbet Mesajları',
+          importance: AndroidImportance.HIGH,
+          visibility: AndroidVisibility.PUBLIC,
+          sound: 'default',
+          vibration: true,
+          vibrationPattern: [250, 200, 250],
+          lights: true,
+          lightColor: '#38BDF8',
+          badge: true,
+        });
+
+        // 2. Notifee Gelen Arama Kanalı (En yüksek öncelik / Heads-up / Zil Sesi)
+        await notifee.createChannel({
+          id: 'chrono_incoming_calls_v4',
+          name: 'Gelen Aramalar',
+          importance: AndroidImportance.HIGH,
+          visibility: AndroidVisibility.PUBLIC,
+          bypassDnd: true,
+          sound: 'default',
+          vibration: true,
+          vibrationPattern: [1000, 800, 1000, 800],
+          lights: true,
+          lightColor: '#10B981',
+        });
+
+        // 3. Expo Sohbet Mesaj Bildirim Kanalı
         await Notifications.setNotificationChannelAsync('chat-messages', {
           name: 'Sohbet Mesajları',
           importance: Notifications.AndroidImportance.MAX,
@@ -172,25 +308,7 @@ class NotificationService {
           showBadge: true,
         });
 
-        // 2. Gelen Arama Bildirim Kanalı (En yüksek öncelik / Heads-up / Zil Sesi Akışı)
-        await Notifications.setNotificationChannelAsync('calls_channel_v2', {
-          name: 'Gelen Aramalar',
-          importance: Notifications.AndroidImportance.MAX,
-          vibrationPattern: [0, 1000, 800, 1000],
-          lightColor: '#10B981',
-          enableVibrate: true,
-          sound: undefined,
-          audioAttributes: {
-            usage: Notifications.AndroidAudioUsage.NOTIFICATION_RINGTONE,
-            contentType: Notifications.AndroidAudioContentType.SONIFICATION,
-            flags: {
-              enforceAudibility: true,
-              requestHardwareAudioVideoSynchronization: false,
-            },
-          },
-        });
-
-        // 3. Canlı Sesli Arama Bildirim Kanalı (Sessiz, titreşimsiz, düşük önem düzeyi)
+        // 4. Canlı Sesli Arama Bildirim Kanalı (Sessiz, titreşimsiz, düşük önem düzeyi)
         await Notifications.setNotificationChannelAsync('ongoing-call', {
           name: 'Aktif Görüşme',
           importance: Notifications.AndroidImportance.LOW,
@@ -201,7 +319,7 @@ class NotificationService {
           lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
         });
 
-        // 4. Sessiz Bildirim Kanalı (Sesli sohbet başlangıçları vb.)
+        // 5. Sessiz Bildirim Kanalı (Sesli sohbet başlangıçları vb.)
         await Notifications.setNotificationChannelAsync('silent_channel', {
           name: 'Sessiz Bildirimler',
           importance: Notifications.AndroidImportance.LOW,
@@ -218,24 +336,207 @@ class NotificationService {
   }
 
   /**
-   * Yeni sohbet mesajı bildirimi (Uygulama açıkken/arka plandayken gelen soket mesajları için anlık bildirim)
+   * WhatsApp / Telegram tarzı gruplanmış (stacked) sohbet mesajı bildirimi.
+   * - Uygulama aktif olarak ekranda açıksa (AppState === 'active') yeni sistem bildirimi fırlatmaz
+   *   (böylece uygulama içindeyken hem in-app hem push bildirim gelmesi önlenir).
+   * - Aynı sohbetten gelen tüm mesajlar tek bir `chat_${roomId}` bildirim kartında alt alta stack'lenir.
    */
-  async showMessageNotification(senderName: string, body: string, roomId: string) {
+  async showMessageNotification(
+    optionsOrSenderName: MessageNotificationOptions | string,
+    maybeBody?: string,
+    maybeRoomId?: string,
+  ) {
     try {
-      const activeRoomId = useChatStore?.getState?.()?.activeRoom?.id;
-      if (activeRoomId === roomId) return;
+      const opts: MessageNotificationOptions =
+        typeof optionsOrSenderName === 'string'
+          ? {
+              senderName: optionsOrSenderName,
+              content: maybeBody || '',
+              roomId: maybeRoomId || '',
+            }
+          : optionsOrSenderName;
 
-      const settings = useChatStore?.getState?.()?.settings;
-      const shouldPlaySound = settings?.inAppSounds ?? true;
+      const { roomId, messageId } = opts;
+      if (!roomId) return;
 
+      // 1. Mesaj ID bazlı tekilleştirme (Hem Socket hem Push aynı mesajı tetiklerse ikincisini yoksay)
+      if (messageId) {
+        if (this.hasNotifiedMessage(messageId)) {
+          return;
+        }
+        this.markMessageNotified(messageId);
+      }
+
+      // 2. Kullanıcı şu an uygulamanın içindeyse (foreground), sistem bildirim çubuğundan
+      // üst üste bildirim düşürme! (Kullanıcı zaten uygulama içinde sohbet listesini veya ekranı görüyor)
+      const isAppActive = AppState.currentState === 'active';
+      const storeState = getChatStore()?.getState?.();
+      const activeRoomId = storeState?.activeRoom?.id;
+
+      if (isAppActive) {
+        // Eğer kullanıcı o an ilgili odanın içindeyse mevcut bildirimleri de temizle
+        if (activeRoomId === roomId) {
+          void this.clearRoomNotifications(roomId);
+        }
+        return;
+      }
+
+      // 3. Oda ve gönderen bilgilerini zenginleştir
+      const storeRoom = storeState?.rooms?.find((r: any) => r.id === roomId);
+      const roomType = opts.roomType || storeRoom?.type || 'DIRECT';
+      const isGroup = roomType === 'ROOM';
+
+      const senderName =
+        opts.senderName ||
+        storeRoom?.peer?.displayName ||
+        storeRoom?.peer?.username ||
+        'Kullanıcı';
+
+      const conversationTitle = isGroup
+        ? opts.roomName || storeRoom?.name || 'Grup Sohbeti'
+        : senderName;
+
+      const senderAvatar = isValidHttpUrl(opts.senderAvatar)
+        ? opts.senderAvatar
+        : isValidHttpUrl(storeRoom?.peer?.avatarUrl)
+          ? storeRoom.peer.avatarUrl
+          : undefined;
+
+      const largeIconUrl = isGroup
+        ? isValidHttpUrl(opts.roomIcon)
+          ? opts.roomIcon
+          : isValidHttpUrl(storeRoom?.iconUrl)
+            ? storeRoom.iconUrl
+            : senderAvatar
+        : senderAvatar;
+
+      const settings = storeState?.settings;
+      const previewEnabled = opts.preview ?? settings?.messagePreview ?? true;
+
+      const formattedText = formatNotificationMessageText(
+        opts.content,
+        opts.messageType,
+        previewEnabled,
+      );
+
+      // 4. Bu odaya ait okunmamış bildirim mesajlarını yığına (stack) ekle
+      const existingStack = this.roomMessagesHistory.get(roomId) || [];
+      if (messageId && existingStack.some((m) => m.messageId === messageId)) {
+        return;
+      }
+
+      const timestamp = opts.timestamp || Date.now();
+      const updatedStack: StackedMessageItem[] = [
+        ...existingStack,
+        {
+          messageId,
+          text: formattedText,
+          timestamp,
+          senderName,
+          senderAvatar,
+        },
+      ].slice(-10); // En fazla son 10 mesajı stack'te tut
+
+      this.roomMessagesHistory.set(roomId, updatedStack);
+      const notifId = `chat_${roomId}`;
+      const messageCount = updatedStack.length;
+
+      // 5. Android: Notifee AndroidStyle.MESSAGING ile WhatsApp/Telegram tarzı konuşma kartı
+      if (Platform.OS === 'android') {
+        await notifee.createChannel({
+          id: 'chrono_chat_messages_v2',
+          name: 'Sohbet Mesajları',
+          importance: AndroidImportance.HIGH,
+          visibility: AndroidVisibility.PUBLIC,
+          sound: 'default',
+          vibration: true,
+          vibrationPattern: [250, 200, 250],
+          lights: true,
+          lightColor: '#38BDF8',
+          badge: true,
+        });
+
+        const summaryHeader = isGroup
+          ? messageCount > 1
+            ? `${conversationTitle} (${messageCount} yeni mesaj)`
+            : conversationTitle
+          : messageCount > 1
+            ? `${conversationTitle} · ${messageCount} yeni mesaj`
+            : conversationTitle;
+
+        await notifee.displayNotification({
+          id: notifId,
+          title: conversationTitle,
+          subtitle: messageCount > 1 ? `${messageCount} yeni mesaj` : undefined,
+          body: isGroup ? `${senderName}: ${formattedText}` : formattedText,
+          data: {
+            roomId,
+            type: 'message',
+            roomName: conversationTitle,
+            roomType,
+          },
+          android: {
+            channelId: 'chrono_chat_messages_v2',
+            category: AndroidCategory.MESSAGE,
+            importance: AndroidImportance.HIGH,
+            visibility: AndroidVisibility.PUBLIC,
+            groupId: 'chrono_chat_group',
+            color: '#2563EB',
+            smallIcon: 'ic_launcher',
+            ...(largeIconUrl
+              ? {
+                  largeIcon: largeIconUrl,
+                  circularLargeIcon: true,
+                }
+              : {}),
+            showTimestamp: true,
+            timestamp,
+            autoCancel: true,
+            pressAction: {
+              id: 'default',
+              launchActivity: 'default',
+            },
+            style: {
+              type: AndroidStyle.MESSAGING,
+              person: {
+                name: storeState?.currentUser?.displayName || 'Ben',
+              },
+              title: isGroup || messageCount > 1 ? summaryHeader : undefined,
+              group: isGroup,
+              messages: updatedStack.map((item) => ({
+                text: item.text,
+                timestamp: item.timestamp,
+                person: {
+                  name: item.senderName,
+                  ...(item.senderAvatar ? { icon: item.senderAvatar } : {}),
+                },
+              })),
+            },
+            actions: [
+              {
+                title: 'Okundu Olarak İşaretle',
+                pressAction: {
+                  id: 'mark_read',
+                },
+              },
+            ],
+          },
+        });
+        return;
+      }
+
+      // 6. iOS: Aynı identifier (`chat_${roomId}`) ile tek kartta güncelle
+      const iosLines = updatedStack.map((item) =>
+        isGroup ? `${item.senderName}: ${item.text}` : item.text,
+      );
       await Notifications.scheduleNotificationAsync({
-        identifier: `msg_${roomId}_${Date.now()}`,
+        identifier: notifId,
         content: {
-          title: senderName,
-          body: body || 'Yeni bir mesajınız var',
+          title: conversationTitle,
+          subtitle: messageCount > 1 ? `${messageCount} yeni mesaj` : undefined,
+          body: iosLines.slice(-4).join('\n'),
           data: { roomId, type: 'message' },
-          sound: shouldPlaySound ? 'default' : undefined,
-          priority: Notifications.AndroidNotificationPriority.HIGH,
+          sound: 'default',
         },
         trigger: null,
       });
@@ -244,54 +545,136 @@ class NotificationService {
     }
   }
 
-  // Kullanıcı odaya girdiğinde ilgili odanın bildirimlerini temizle
+  /**
+   * Kullanıcı odaya girdiğinde (bildirime tıklamadan doğrudan uygulama içinden girse bile)
+   * ilgili odanın bildirimlerini ve mesaj stack'ini tamamen temizler.
+   */
   async clearRoomNotifications(roomId: string) {
+    if (!roomId) return;
+    this.roomMessagesHistory.delete(roomId);
+
+    if (Platform.OS === 'android') {
+      try {
+        await notifee.cancelNotification(`chat_${roomId}`).catch(() => {});
+        await notifee.cancelDisplayedNotification(`chat_${roomId}`).catch(() => {});
+
+        const displayed = await notifee.getDisplayedNotifications();
+        let remainingChatNotifs = 0;
+
+        for (const item of displayed) {
+          const nId = item.id || item.notification?.id;
+          const nData: any = item.notification?.data || {};
+          const nRoomId = nData?.roomId;
+
+          if (
+            nId === `chat_${roomId}` ||
+            nId === `room_${roomId}` ||
+            nRoomId === roomId ||
+            (nId && nId.startsWith(`msg_${roomId}`))
+          ) {
+            if (nId) {
+              await notifee.cancelNotification(nId).catch(() => {});
+            }
+          } else if (nData?.type === 'message' && nId !== 'chrono_chat_summary') {
+            remainingChatNotifs++;
+          }
+        }
+
+        if (remainingChatNotifs === 0) {
+          await notifee.cancelNotification('chrono_chat_summary').catch(() => {});
+        }
+      } catch {
+        // yut
+      }
+    }
+
     try {
       await Notifications.dismissNotificationAsync(`chat_${roomId}`).catch(() => {});
+      await Notifications.dismissNotificationAsync(`room_${roomId}`).catch(() => {});
       const presented = await Notifications.getPresentedNotificationsAsync();
       for (const notif of presented) {
-        const notifData = notif.request?.content?.data;
-        if (notifData?.roomId === roomId || notif.request?.identifier === `chat_${roomId}`) {
-          await Notifications.dismissNotificationAsync(notif.request.identifier).catch(() => {});
+        const identifier = notif.request?.identifier;
+        const notifData: any = notif.request?.content?.data || {};
+        let targetRoomId = notifData?.roomId;
+
+        if (!targetRoomId && typeof notifData?.dataString === 'string') {
+          try {
+            targetRoomId = JSON.parse(notifData.dataString)?.roomId;
+          } catch {}
+        }
+        if (!targetRoomId && (notif.request?.trigger as any)?.remoteMessage?.data) {
+          const rmData = (notif.request?.trigger as any).remoteMessage.data;
+          targetRoomId = rmData?.roomId;
+          if (!targetRoomId && typeof rmData?.dataString === 'string') {
+            try {
+              targetRoomId = JSON.parse(rmData.dataString)?.roomId;
+            } catch {}
+          }
+        }
+
+        if (
+          targetRoomId === roomId ||
+          identifier === `chat_${roomId}` ||
+          identifier === `room_${roomId}` ||
+          (identifier && identifier.startsWith(`msg_${roomId}`))
+        ) {
+          await Notifications.dismissNotificationAsync(identifier).catch(() => {});
         }
       }
-    } catch (err) {
+    } catch {
       // yut
     }
   }
 
   // Gelen arama bildirimi (Heads-up / Tam bildirim, kesintisiz zil sesi ve titreşim)
-  async showCallNotification(callerName: string, isVideo: boolean, callId: string) {
+  async showCallNotification(callerName: string, isVideo: boolean, callId: string, roomId = '') {
     try {
+      // Aynı callId için çift çağrıyı (Socket + Background Push) engelle
+      if (callId && this.activeRingingCallIds.has(callId)) {
+        return;
+      }
+      if (callId) {
+        this.activeRingingCallIds.add(callId);
+      }
+
+      // Gelen aramada diğer medyaları duraklatıp zil sesini başlat
+      void callSoundService.startIncomingRingtone();
+
       if (Platform.OS === 'android') {
         try {
           await notifee.deleteChannel('chrono_incoming_calls_v2').catch(() => {});
+          await notifee.deleteChannel('chrono_incoming_calls_v3').catch(() => {});
           await notifee.createChannel({
-            id: 'chrono_incoming_calls_v3',
+            id: 'chrono_incoming_calls_v4',
             name: 'Gelen Aramalar',
             importance: AndroidImportance.HIGH,
-            sound: 'ringtone',
+            visibility: AndroidVisibility.PUBLIC,
+            bypassDnd: true,
+            sound: 'default',
             vibration: true,
-            vibrationPattern: [0, 1000, 800, 1000],
+            vibrationPattern: [1000, 800, 1000, 800],
           });
 
           const notifId = `call_${callId}`;
           await notifee.displayNotification({
             id: notifId,
-            title: isVideo ? '📹 Gelen Görüntülü Arama' : '📞 Gelen Sesli Arama',
-            body: `${callerName} sizi arıyor...`,
-            data: { callId, type: 'incoming_call', roomId: '', callerName, video: String(isVideo) },
+            title: callerName,
+            subtitle: isVideo ? 'Chrono Görüntülü Arama' : 'Chrono Sesli Arama',
+            body: isVideo ? '📹 Gelen görüntülü arama...' : '📞 Gelen sesli arama...',
+            data: { callId, type: 'incoming_call', roomId, callerName, video: String(isVideo) },
             android: {
-              channelId: 'chrono_incoming_calls_v3',
+              channelId: 'chrono_incoming_calls_v4',
               category: AndroidCategory.CALL,
               importance: AndroidImportance.HIGH,
               visibility: AndroidVisibility.PUBLIC,
-              sound: 'ringtone',
+              color: '#10B981',
+              smallIcon: 'ic_launcher',
+              sound: 'default',
               loopSound: true,
               ongoing: true,
               autoCancel: false,
               timeoutAfter: 30000,
-              vibrationPattern: [0, 1000, 800, 1000],
+              vibrationPattern: [1000, 800, 1000, 800],
               pressAction: { id: 'default', launchActivity: 'default' },
               fullScreenAction: { id: 'default', launchActivity: 'default' },
               actions: [
@@ -314,7 +697,7 @@ class NotificationService {
           }
           const timeout = setTimeout(() => {
             void this.dismissCallNotification(callId);
-            const state = useChatStore?.getState?.();
+            const state = getChatStore()?.getState?.();
             if (state?.activeCall?.callId === callId && state.activeCall.state === 'ringing') {
               state.declineCall(callId);
             }
@@ -333,13 +716,12 @@ class NotificationService {
       await Notifications.scheduleNotificationAsync({
         identifier: notifId,
         content: {
-          title: isVideo ? '📹 Gelen Görüntülü Arama' : '📞 Gelen Sesli Arama',
-          body: `${callerName} sizi arıyor...`,
-          data: { callId, type: 'incoming_call' },
+          title: callerName,
+          body: isVideo ? '📹 Gelen görüntülü arama...' : '📞 Gelen sesli arama...',
+          data: { callId, type: 'incoming_call', roomId },
           sound: 'ringtone.wav',
           color: '#10B981',
           priority: Notifications.AndroidNotificationPriority.MAX,
-          ...(Platform.OS === 'android' ? { channelId: 'calls_channel_v2' } : {}),
         },
         trigger: null,
       });
@@ -350,15 +732,20 @@ class NotificationService {
   }
 
   // Arama sonlandığında gelen arama bildirimini ve sesleri temizle
-  async dismissCallNotification(callId?: string) {
+  async dismissCallNotification(callId?: string, endCallKeep = false) {
     void callSoundService.stopAll();
 
     if (callId) {
+      this.activeRingingCallIds.delete(callId);
       if (this.callTimeouts.has(callId)) {
         clearTimeout(this.callTimeouts.get(callId));
         this.callTimeouts.delete(callId);
       }
-      callKeepService.endCall(callId);
+      if (endCallKeep) {
+        callKeepService.endCall(callId);
+      }
+    } else {
+      this.activeRingingCallIds.clear();
     }
 
     if (Platform.OS === 'android') {
@@ -437,8 +824,8 @@ class NotificationService {
         await foregroundServiceManager.stopCallForegroundService();
       }
       await Notifications.dismissNotificationAsync('active_voice_call');
-      await Notifications.dismissNotificationAsync('active_call_notif').catch(() => { });
-      await Notifications.dismissNotificationAsync('chrono_ongoing_call').catch(() => { });
+      await Notifications.dismissNotificationAsync('active_call_notif').catch(() => {});
+      await Notifications.dismissNotificationAsync('chrono_ongoing_call').catch(() => {});
     } catch (err) {
       // yut
     }

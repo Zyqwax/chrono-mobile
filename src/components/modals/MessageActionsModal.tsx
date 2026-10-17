@@ -41,24 +41,29 @@ export const MessageActionsModal: React.FC<MessageActionsModalProps> = ({
 
               {/* Mesaj Önizlemesi */}
               <View style={styles.previewBox}>
-                <Text style={styles.previewText} numberOfLines={2}>
-                  {message.content || "Medya mesajı"}
+                <Text
+                  style={[styles.previewText, message.deletedAt ? { fontStyle: "italic", opacity: 0.7 } : null]}
+                  numberOfLines={2}
+                >
+                  {message.deletedAt ? "Bu mesaj silindi" : message.content || "Medya mesajı"}
                 </Text>
               </View>
 
               <View style={styles.optionsList}>
-                {/* Yanıtla */}
-                <TouchableOpacity
-                  style={styles.optionRow}
-                  onPress={() => {
-                    onClose();
-                    onReply(message);
-                  }}
-                  activeOpacity={0.7}
-                >
-                  <Ionicons name="arrow-undo-outline" size={20} color="#38BDF8" style={{ marginRight: 12 }} />
-                  <Text style={styles.optionText}>Yanıtla</Text>
-                </TouchableOpacity>
+                {/* Yanıtla (Silinmiş mesajlar yanıtlanamaz) */}
+                {!message.deletedAt && (
+                  <TouchableOpacity
+                    style={styles.optionRow}
+                    onPress={() => {
+                      onClose();
+                      onReply(message);
+                    }}
+                    activeOpacity={0.7}
+                  >
+                    <Ionicons name="arrow-undo-outline" size={20} color="#38BDF8" style={{ marginRight: 12 }} />
+                    <Text style={styles.optionText}>Yanıtla</Text>
+                  </TouchableOpacity>
+                )}
 
                 {/* Düzenle (Yalnızca kendi metin mesajı ise) */}
                 {isMe && message.type === "TEXT" && !message.deletedAt && (

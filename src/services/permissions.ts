@@ -1,13 +1,61 @@
 import { Alert, Linking, PermissionsAndroid, Platform } from 'react-native';
 
 /**
- * Arama başlatılmadan veya kabul edilmeden önce mikrofon ve kamera izinlerini önceden sorgular.
+ * Android 12+ (API 31+) Bluetooth Connect iznini çalışma zamanında ister.
+ * İzin reddedilse bile aramanın çökmeden normal şekilde (hoparlör/ahize ile) devam
+ * edebilmesi için hata fırlatmaz, false döner.
+ */
+export async function requestBluetoothPermissions(): Promise<boolean> {
+  if (Platform.OS === 'android' && Platform.Version >= 31) {
+    try {
+      const bluetoothConnectPerm = (PermissionsAndroid.PERMISSIONS as any).BLUETOOTH_CONNECT;
+      if (!bluetoothConnectPerm) return true;
+
+      const hasPerm = await PermissionsAndroid.check(bluetoothConnectPerm);
+      if (hasPerm) return true;
+
+      const result = await PermissionsAndroid.request(bluetoothConnectPerm);
+      return result === PermissionsAndroid.RESULTS.GRANTED;
+    } catch (err) {
+      console.warn('BLUETOOTH_CONNECT izni istenirken hata:', err);
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * Arama başlamadan veya odaya bağlanmadan hemen önce ses ve bluetooth izinlerini kontrol eder/ister.
+ */
+export async function requestAudioPermissions(): Promise<{ micGranted: boolean; bluetoothGranted: boolean }> {
+  let micGranted = true;
+  let bluetoothGranted = true;
+
+  if (Platform.OS === 'android') {
+    try {
+      const micStatus = await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.RECORD_AUDIO);
+      micGranted = micStatus === PermissionsAndroid.RESULTS.GRANTED;
+
+      bluetoothGranted = await requestBluetoothPermissions();
+    } catch (err) {
+      console.warn('requestAudioPermissions hatası:', err);
+    }
+  }
+
+  return { micGranted, bluetoothGranted };
+}
+
+/**
+ * Arama başlatılmadan veya kabul edilmeden önce mikrofon, kamera ve bluetooth izinlerini önceden sorgular.
  * Kullanıcı ilk kez arama yapıyorsa izinler arama başlatılmadan hemen önce istenir.
- * İzin verilmezse arama başlatılmaz ve kullanıcı bilgilendirilir.
+ * Zorunlu izin (mikrofon) verilmezse arama başlatılmaz ve kullanıcı bilgilendirilir.
  */
 export async function requestCallPermissions(video = false): Promise<boolean> {
   if (Platform.OS === 'android') {
     try {
+      // Android 12+ Bluetooth iznini arka planda iste (reddedilse bile arama devam edebilir)
+      requestBluetoothPermissions().catch(() => {});
+
       const permsToCheck: string[] = [PermissionsAndroid.PERMISSIONS.RECORD_AUDIO];
       if (video) {
         permsToCheck.push(PermissionsAndroid.PERMISSIONS.CAMERA);

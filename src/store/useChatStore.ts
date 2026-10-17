@@ -5,6 +5,7 @@ import {
   Contact,
   IncomingCall,
   Message,
+  MessageType,
   Room,
   User,
   UserSettings,
@@ -18,6 +19,7 @@ import {
 } from '../services/notifications';
 import { liveKitService } from '../services/livekit';
 import { localDb } from '../services/localDb';
+import { mediaCacheService } from '../services/mediaCacheService';
 import { requestCallPermissions } from '../services/permissions';
 import { callKeepService } from '../services/callkeep';
 import { cryptoService } from '../services/cryptoService';
@@ -73,6 +75,12 @@ async function decryptMessageIfNeeded(
 const STORAGE_TOKEN_KEY = '@chrono_auth_token';
 const STORAGE_USER_KEY = '@chrono_auth_user';
 const STORAGE_ROOMS_KEY = '@chrono_rooms_cache';
+const STORAGE_LAST_PUSH_TOKEN_KEY = '@chrono_last_synced_push_token';
+
+// In-flight guard ve önbellek değişkenleri (Push token çifte senkronizasyonunu engeller)
+let isSyncingPushToken = false;
+let lastSyncedPushToken: string | null = null;
+let lastSyncedUserId: string | null = null;
 
 const persistRooms = (rooms: Room[]) => {
   AsyncStorage.setItem(STORAGE_ROOMS_KEY, JSON.stringify(rooms)).catch((err) => {
@@ -127,6 +135,13 @@ interface ChatStore {
   uploadTempRoomIcon: (formData: FormData) => Promise<{ iconUrl: string }>;
   uploadRoomIcon: (roomId: string, formData: FormData) => Promise<Room>;
   removeRoomIcon: (roomId: string) => Promise<Room>;
+  uploadMedia: (formData: FormData) => Promise<{
+    url: string;
+    type: MessageType;
+    width?: number;
+    height?: number;
+    duration?: number;
+  }>;
 
   // Messages state
   messages: Message[];
@@ -138,7 +153,14 @@ interface ChatStore {
     roomId: string,
     content: string,
     replyToId?: string,
+    type?: MessageType,
+    localUri?: string,
   ) => Promise<void>;
+  updateMessageLocalUri: (
+    roomId: string,
+    messageId: string,
+    localUri: string,
+  ) => void;
   editMessage: (messageId: string, content: string) => Promise<void>;
   deleteMessage: (messageId: string) => Promise<void>;
   markAsRead: (roomId: string) => Promise<void>;
@@ -242,7 +264,6 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         get().fetchRooms().catch(() => undefined);
         get().fetchMe().catch(() => undefined);
         get().fetchSettings().catch(() => undefined);
-        get().syncPushToken().catch(console.warn);
         notificationService.init().catch(console.warn);
         callKeepService.setup({
           onAnswerCall: (callId) => get().acceptCall(callId),
@@ -268,34 +289,64 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   },
 
   syncPushToken: async () => {
-    const token = get().token;
+    const { token, currentUser } = get();
     if (!token) return null;
 
+    if (isSyncingPushToken) {
+      console.log('⏳ [syncPushToken] Eşzamanlı çağrı engellendi (In-Flight Guard aktif).');
+      return null;
+    }
+
+    isSyncingPushToken = true;
     try {
       console.log('🔄 [syncPushToken] Push token alınmaya çalışılıyor...');
       const pushToken = await registerForPushNotificationsAsync();
-      if (pushToken) {
-        console.log('📲 [syncPushToken] Push token sunucuya gönderiliyor (PUT /users/me/push-token):', pushToken);
-        const res = await api.put('/users/me/push-token', {
-          pushToken,
-          platform: Platform.OS,
-        });
-        if (res.data) {
-          set((state) => {
-            const nextUser = state.currentUser ? { ...state.currentUser, pushToken } : null;
-            if (nextUser) {
-              AsyncStorage.setItem(STORAGE_USER_KEY, JSON.stringify(nextUser)).catch(console.error);
-            }
-            return { currentUser: nextUser };
-          });
-          console.log('✅ [syncPushToken] Push token sunucuya ve yerel hafızaya kaydedildi:', pushToken);
-        }
-        return pushToken;
-      } else {
+      if (!pushToken) {
         console.warn('⚠️ [syncPushToken] registerForPushNotificationsAsync null döndü, sunucuya istek atılmadı.');
+        return null;
       }
+
+      // Önbellek kontrolü: Hafızadaki son senkronize edilen token ile aynıysa ve kullanıcı değişmediyse
+      // ya da currentUser.pushToken ile birebir aynıysa sunucuya gereksiz PUT isteği gönderme
+      const cachedToken =
+        lastSyncedPushToken ||
+        (await AsyncStorage.getItem(STORAGE_LAST_PUSH_TOKEN_KEY).catch(() => null));
+      const isAlreadySynced =
+        (cachedToken === pushToken && lastSyncedUserId === currentUser?.id) ||
+        (currentUser?.pushToken && currentUser.pushToken === pushToken);
+
+      if (isAlreadySynced) {
+        console.log('⚡ [syncPushToken] Push token zaten güncel ve senkronize, sunucu isteği atlanıyor:', pushToken);
+        lastSyncedPushToken = pushToken;
+        if (currentUser?.id) lastSyncedUserId = currentUser.id;
+        return pushToken;
+      }
+
+      console.log('📲 [syncPushToken] Push token sunucuya gönderiliyor (PUT /users/me/push-token):', pushToken);
+      const res = await api.put('/users/me/push-token', {
+        pushToken,
+        platform: Platform.OS,
+      });
+
+      lastSyncedPushToken = pushToken;
+      if (currentUser?.id) lastSyncedUserId = currentUser.id;
+      AsyncStorage.setItem(STORAGE_LAST_PUSH_TOKEN_KEY, pushToken).catch(console.error);
+
+      if (res.data) {
+        set((state) => {
+          const nextUser = state.currentUser ? { ...state.currentUser, pushToken } : null;
+          if (nextUser) {
+            AsyncStorage.setItem(STORAGE_USER_KEY, JSON.stringify(nextUser)).catch(console.error);
+          }
+          return { currentUser: nextUser };
+        });
+        console.log('✅ [syncPushToken] Push token sunucuya ve yerel hafızaya kaydedildi:', pushToken);
+      }
+      return pushToken;
     } catch (err: any) {
       console.error('❌ [syncPushToken] Push token senkronizasyon hatası:', err?.response?.data || err?.message || err);
+    } finally {
+      isSyncingPushToken = false;
     }
     return null;
   },
@@ -365,16 +416,56 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         // Odaya ait mesaj havuzuna çözülmüş mesajı ekle
         addMessage(message);
 
+        // Gelen fotoğraf veya sesli mesajları arka planda otomatik cihaz deposuna önbellekle
+        if (message.content && (message.type === 'IMAGE' || message.type === 'AUDIO')) {
+          void mediaCacheService.ensureLocalMedia(message.content, message.type, (localUri) => {
+            void localDb.updateMessageLocalUri(message.id, localUri);
+            get().updateMessageLocalUri(message.roomId, message.id, localUri);
+          });
+        }
+
         if (activeRoom && message.roomId === activeRoom.id) {
-          // Açık odadaysak hemen okundu bildir
+          // Açık odadaysak hemen okundu bildir ve bildirimleri temizle
+          void notificationService.clearRoomNotifications(activeRoom.id);
           get().markAsRead(activeRoom.id);
         } else {
-          // Kullanıcı bu odada değilse (ana sayfada, başka bir odada veya uygulama açıkken) anlık bildirim göster
+          // Kullanıcı bu odada değilse mesajı bildirim servisine ilet
+          // (Uygulama ön planda açıksa bastırılır, arka planda ise WhatsApp/Telegram tarzı stack'lenir)
           const isMine = message.senderId === get().currentUser?.id;
           if (!isMine) {
-            const senderName = message.sender?.displayName || message.sender?.username || 'Chrono';
-            const body = message.content || (message.ciphertext ? '🔒 Yeni bir mesaj' : 'Yeni bir mesajınız var');
-            notificationService.showMessageNotification(senderName, body, message.roomId);
+            const targetRoom = get().rooms.find((r) => r.id === message.roomId);
+            const senderName =
+              message.sender?.displayName ||
+              message.sender?.username ||
+              targetRoom?.peer?.displayName ||
+              'Kullanıcı';
+            const senderAvatar =
+              message.sender?.avatarUrl || targetRoom?.peer?.avatarUrl || null;
+            const roomType = targetRoom?.type || 'DIRECT';
+            const roomName =
+              roomType === 'ROOM'
+                ? targetRoom?.name || 'Grup Sohbeti'
+                : senderName;
+            const roomIcon =
+              roomType === 'ROOM'
+                ? targetRoom?.iconUrl || senderAvatar
+                : senderAvatar;
+
+            void notificationService.showMessageNotification({
+              messageId: message.id,
+              roomId: message.roomId,
+              roomName,
+              roomType,
+              roomIcon,
+              senderId: message.senderId,
+              senderName,
+              senderAvatar,
+              messageType: message.type,
+              content: message.content,
+              timestamp: message.createdAt
+                ? new Date(message.createdAt).getTime()
+                : Date.now(),
+            });
           }
         }
 
@@ -401,18 +492,34 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         const { messages, rooms, roomMessages } = get();
         const roomId = updatedMessage.roomId;
         const currentRoomMsgs = roomMessages[roomId] || [];
-        const updatedRoomMsgs = currentRoomMsgs.map((m) =>
-          m.id === updatedMessage.id ? updatedMessage : m,
-        );
+        const isDeleted = !!updatedMessage.deletedAt;
+
+        const updateMsgItem = (m: Message): Message => {
+          if (m.id === updatedMessage.id) {
+            return updatedMessage;
+          }
+          if (isDeleted && m.replyTo?.id === updatedMessage.id) {
+            return {
+              ...m,
+              replyTo: {
+                ...m.replyTo,
+                deletedAt: updatedMessage.deletedAt,
+                content: '',
+                ciphertext: null,
+              },
+            };
+          }
+          return m;
+        };
+
+        const updatedRoomMsgs = currentRoomMsgs.map(updateMsgItem);
 
         set({
           roomMessages: {
             ...roomMessages,
             [roomId]: updatedRoomMsgs,
           },
-          messages: messages.map((m) =>
-            m.id === updatedMessage.id ? updatedMessage : m,
-          ),
+          messages: messages.map(updateMsgItem),
           rooms: rooms.map((r) => {
             if (r.lastMessage?.id === updatedMessage.id) {
               return { ...r, lastMessage: updatedMessage };
@@ -447,6 +554,9 @@ export const useChatStore = create<ChatStore>((set, get) => ({
 
       // 5. Okundu bilgisi senkronizasyonu
       socket.on('room_read', ({ roomId, unreadCount }: { roomId: string; unreadCount: number }) => {
+        if (!unreadCount || unreadCount === 0) {
+          void notificationService.clearRoomNotifications(roomId);
+        }
         set((state) => {
           const target = state.rooms.find((r) => r.id === roomId);
           if (!target || (target.unreadCount || 0) === (unreadCount || 0)) return state;
@@ -626,7 +736,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       socket.on('call_ended', () => {
         const lastCallId = get().activeCall?.callId;
         set({ activeCall: null });
-        notificationService.dismissCallNotification(lastCallId);
+        notificationService.dismissCallNotification(lastCallId, true);
         notificationService.dismissOngoingCallNotification();
       });
 
@@ -708,6 +818,9 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   },
 
   logout: () => {
+    isSyncingPushToken = false;
+    lastSyncedPushToken = null;
+    lastSyncedUserId = null;
     api.put('/users/me/push-token', { pushToken: null }).catch(() => {});
     disconnectSocket();
     setAuthToken(null);
@@ -716,6 +829,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     AsyncStorage.removeItem(STORAGE_TOKEN_KEY).catch(console.error);
     AsyncStorage.removeItem(STORAGE_USER_KEY).catch(console.error);
     AsyncStorage.removeItem(STORAGE_ROOMS_KEY).catch(console.error);
+    AsyncStorage.removeItem(STORAGE_LAST_PUSH_TOKEN_KEY).catch(console.error);
     set({
       currentUser: null,
       token: null,
@@ -1213,6 +1327,49 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     return data;
   },
 
+  uploadMedia: async (formData) => {
+    const token = await AsyncStorage.getItem(STORAGE_TOKEN_KEY);
+
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', `${API_BASE_URL}/messages/upload-media`);
+      xhr.timeout = 120000;
+
+      if (token) {
+        xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+      }
+      xhr.setRequestHeader('ngrok-skip-browser-warning', 'true');
+
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          try {
+            const data = JSON.parse(xhr.responseText);
+            resolve(data);
+          } catch (e) {
+            reject(new Error('Sunucu yanıtı okunamadı'));
+          }
+        } else {
+          try {
+            const errData = JSON.parse(xhr.responseText);
+            reject(new Error(errData?.message || `Medya yükleme hatası (${xhr.status})`));
+          } catch {
+            reject(new Error(`Medya yükleme hatası (${xhr.status})`));
+          }
+        }
+      };
+
+      xhr.onerror = () => {
+        reject(new Error('Ağ bağlantısı hatası: Sunucuya ulaşılamadı'));
+      };
+
+      xhr.ontimeout = () => {
+        reject(new Error('Medya yükleme zaman aşımına uğradı (120s)'));
+      };
+
+      xhr.send(formData);
+    });
+  },
+
   // Messages
   messages: [],
   roomMessages: {},
@@ -1428,7 +1585,28 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     }
   },
 
-  sendMessage: async (roomId: string, content: string, replyToId?: string) => {
+  updateMessageLocalUri: (roomId: string, messageId: string, localUri: string) => {
+    set((state) => {
+      const rMsgs = (state.roomMessages[roomId] || []).map((m) =>
+        m.id === messageId ? { ...m, localUri } : m,
+      );
+      const activeMsgs = state.messages.map((m) =>
+        m.id === messageId ? { ...m, localUri } : m,
+      );
+      return {
+        roomMessages: { ...state.roomMessages, [roomId]: rMsgs },
+        messages: activeMsgs,
+      };
+    });
+  },
+
+  sendMessage: async (
+    roomId: string,
+    content: string,
+    replyToId?: string,
+    type: MessageType = 'TEXT',
+    localUri?: string,
+  ) => {
     const currentUser = get().currentUser;
     const tempId = `temp_${Date.now()}`;
     const nowIso = new Date().toISOString();
@@ -1440,9 +1618,10 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       content,
       replyToId: replyToId || null,
       createdAt: nowIso,
-      type: 'TEXT',
+      type: type || 'TEXT',
       sender: currentUser || { id: 'me', username: 'me', displayName: 'Ben' },
       isPending: true,
+      localUri: localUri || null,
     };
 
     get().addMessage(optimisticMessage);
@@ -1450,7 +1629,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     const room = get().rooms.find((r) => r.id === roomId) || get().activeRoom;
     const peerPubKey = getRoomPeerPublicKey(room, currentUser?.id);
 
-    let sendPayload: any = { roomId, replyToId, tempId };
+    let sendPayload: any = { roomId, replyToId, tempId, type: type || 'TEXT' };
     if (peerPubKey) {
       const encrypted = await cryptoService.encryptMessage(content, peerPubKey);
       if (encrypted) {
@@ -1473,8 +1652,10 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           if (ack?.ok && ack?.message) {
             const confirmed: Message = {
               ...ack.message,
+              type: ack.message.type || type,
               content,
               isPending: false,
+              localUri: localUri || null,
             };
             void localDb.saveMessage(confirmed);
             set((state) => {
@@ -1498,8 +1679,10 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         if (res.data) {
           const confirmed: Message = {
             ...res.data,
+            type: res.data.type || type,
             content,
             isPending: false,
+            localUri: localUri || null,
           };
           void localDb.saveMessage(confirmed);
           set((state) => {
@@ -1548,20 +1731,35 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     try {
       await api.delete(`/messages/${messageId}`);
       void localDb.deleteMessage(messageId, true);
+      const nowIso = new Date().toISOString();
+      const updateMsgItem = (m: Message): Message => {
+        if (m.id === messageId) {
+          return { ...m, deletedAt: nowIso, content: '' };
+        }
+        if (m.replyTo?.id === messageId) {
+          return {
+            ...m,
+            replyTo: {
+              ...m.replyTo,
+              deletedAt: nowIso,
+              content: '',
+              ciphertext: null,
+            },
+          };
+        }
+        return m;
+      };
+
       set((state) => {
         const nextRoomMessages = { ...state.roomMessages };
         for (const rId of Object.keys(nextRoomMessages)) {
-          if (nextRoomMessages[rId]?.some((m) => m.id === messageId)) {
-            nextRoomMessages[rId] = nextRoomMessages[rId].map((m) =>
-              m.id === messageId ? { ...m, deletedAt: new Date().toISOString(), content: '' } : m,
-            );
+          if (nextRoomMessages[rId]) {
+            nextRoomMessages[rId] = nextRoomMessages[rId].map(updateMsgItem);
           }
         }
         return {
           roomMessages: nextRoomMessages,
-          messages: state.messages.map((m) =>
-            m.id === messageId ? { ...m, deletedAt: new Date().toISOString(), content: '' } : m,
-          ),
+          messages: state.messages.map(updateMsgItem),
         };
       });
     } catch (err) {
@@ -1681,9 +1879,13 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     }));
   },
 
-  toggleVideo: () => {
+  toggleVideo: async () => {
     const nextVideo = !get().isVideoOn;
-    liveKitService.setCameraEnabled(nextVideo).catch(console.warn);
+    if (nextVideo) {
+      const hasPerms = await requestCallPermissions(true);
+      if (!hasPerms) return;
+    }
+    await liveKitService.setCameraEnabled(nextVideo).catch(console.warn);
     set((state) => ({
       isVideoOn: nextVideo,
       voiceParticipants: state.voiceParticipants.map((p) =>
@@ -1741,7 +1943,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         console.warn('REST call decline failed:', e);
       }
     }
-    notificationService.dismissCallNotification(callId);
+    notificationService.dismissCallNotification(callId, true);
     set({ activeCall: null });
   },
 
@@ -1750,7 +1952,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     if (socket && socket.connected) {
       socket.emit('call_end', { callId });
     }
-    notificationService.dismissCallNotification(callId);
+    notificationService.dismissCallNotification(callId, true);
     set({ activeCall: null });
   },
 }));

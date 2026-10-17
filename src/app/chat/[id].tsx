@@ -29,16 +29,15 @@ export default function ChatDetailRoute() {
 
   useEffect(() => {
     if (!id) return;
-    notificationService.clearRoomNotifications(id);
+    void notificationService.clearRoomNotifications(id);
     const store = useChatStore.getState();
     const existing =
       store.rooms.find((r) => r.id === id) ||
       (store.activeRoom?.id === id ? store.activeRoom : null);
 
     if (existing) {
-      if (store.activeRoom?.id !== id) {
-        store.setActiveRoom(existing);
-      }
+      store.setActiveRoom(existing);
+      void store.markAsRead(id);
     } else {
       setLoading(true);
       store
@@ -46,6 +45,7 @@ export default function ChatDetailRoute() {
         .then((fetched) => {
           if (fetched) {
             store.setActiveRoom(fetched);
+            void store.markAsRead(id);
           } else {
             return store.fetchRooms();
           }
